@@ -1,0 +1,39 @@
+
+-- fun1 x y = plus  x y
+-- fun2 a b = minus a b
+
+inc x = plus  x 1
+dec x = minus x 1
+
+neq x y = not (eq x y)
+
+gt x y = lt y x
+
+ge x y = le y x
+
+compare x y = ifte (lt x y) LT (ifte (eq x y) EQ GT)
+
+foldl f x0 list = go x0 list where
+  { go x ls = case ls of { Nil -> x ; Cons y ys -> go (f x y) ys }
+  }
+
+sum = foldl plus 0
+
+range         = rangeFrom 0
+rangeFrom k n = ifte (gt n 0) (Cons k (rangeFrom (inc k) (dec n))) Nil
+
+range'     = rangeFrom' 0
+rangeFrom' = worker where { 
+  worker k n = ifte (gt n 0) (Cons k (worker (inc k) (dec n))) Nil }
+
+reverse = foldl (\xs x -> Cons x xs) Nil
+
+showNat n = ifte (lt n 0) (error "showNat: negative") (worker n) where
+  { worker n = ifte (eq n 0) "0" (reverse (go n))
+  ; go     n = ifte (eq n 0) Nil (Cons (chr (plus (mod n 10) 48)) (go (div n 10)))
+  }
+
+main = Pair 
+  (showNat (sum (range' 101)))
+  (sum (rangeFrom 100 7)) 
+

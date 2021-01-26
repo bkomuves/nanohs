@@ -44,8 +44,13 @@ import PrimGHC
 --------------------------------------------------------------------------------
 -- * entry point (required below)
 
-main :: Unit
-main = error "nanoMain"
+-- main :: Unit
+-- main = error "nanoMain"
+main = (showInt (sum (range 11)))
+
+-- main = Pair 
+--   (sum (rangeFrom 1 10)) 
+--   (showInt (sum (range 101)))
 
 --------------------------------------------------------------------------------
 -- * Prelude
@@ -84,8 +89,6 @@ dec n = minus n 1
 natRec :: a -> (a -> a) -> Int -> a
 natRec z s = go where { go n = ifte (eq n 0) z (s (go (dec n))) }
 
-data Ordering = LT | EQ | GT deriving Show
-
 ceq :: Char -> Char -> Bool
 ceq c d = eq (ord c) (ord d)
 
@@ -103,6 +106,8 @@ gt x y = lt y x
 
 ge :: Int -> Int -> Bool
 ge x y = le y x
+
+data Ordering = LT | EQ | GT deriving Show
 
 compare :: Int -> Int -> Ordering
 compare x y = ifte (lt x y) LT (ifte (eq x y) EQ GT)
@@ -133,6 +138,12 @@ rangeFrom k n = ifte (gt n 0) (Cons k (rangeFrom (inc k) (dec n))) Nil
 --
 -- not :: Bool -> Bool
 -- not b = case b of { True -> False ; False -> True }
+
+and3 :: Bool -> Bool -> Bool -> Bool
+and3 x y z = and (and x y) z
+
+andList :: List Bool -> Bool
+andList list = case list of { Nil -> False ; Cons b bs -> ifte b (andList bs) False }
 
 --------------------------------------------------------------------------------
 -- ** Maybe
@@ -245,8 +256,14 @@ flipFoldr f list y0 = go list y0 where
 foldr :: (b -> a -> a) -> (a -> List b -> a)
 foldr f x list = flipFoldr f list x
 
+sum :: List Int -> Int
+sum = foldl plus 0
+
 reverse :: List a -> List a
 reverse = foldl (\xs x -> Cons x xs) Nil
+
+snoc :: List a -> a -> List a
+snoc xs y = case xs of { Nil -> singleton y ; Cons z zs -> Cons z (snoc zs y) }
 
 append :: List a -> List a -> List a
 append xs ys = case xs of { Nil -> ys ; Cons z zs -> Cons z (append zs ys) }
@@ -373,8 +390,9 @@ parenString = delimString '(' ')'
 intercalate :: List a -> List (List a) -> List a
 intercalate sep = go where
   { go xss = case xss of
-    { Nil -> Nil
-    ; Cons ys yss -> append ys (append sep (go yss)) } }
+    { Nil -> Nil ; Cons ys yss -> case yss of 
+      { Nil -> ys
+      ; _   -> append ys (append sep (go yss)) } } }
 
 unwords :: List String -> String
 unlines :: List String -> String
@@ -892,7 +910,8 @@ listAppsE  list = case list of { Cons f args -> appsE f args ; Nil -> error "lis
 
 data Prim 
   = Error | Negate | Plus | Minus | Times | Div | Mod | Chr | Ord
-  | IFTE | Not | And | Or | GenEQ | IntEQ | IntLT | IntLE | GetChar | PutChar
+  | IFTE | Not | And | Or | GenEQ | IntEQ | IntLT | IntLE 
+  | GetChar | PutChar | IsEOF | GetArg
   deriving (Eq,Show)
 
 type Arity = Int
@@ -920,6 +939,8 @@ primops = trieFromList
   , Pair "le"      (PrimOp 2  IntLE )
   , Pair "getChar" (PrimOp 1  GetChar )
   , Pair "putChar" (PrimOp 1  PutChar )
+  , Pair "isEOF"   (PrimOp 1  IsEOF   )
+  , Pair "getArg"  (PrimOp 1  GetArg  )
   ]
 
 -- | From @((f x) y) z@ we create the list [f,x,y,z]
@@ -950,7 +971,9 @@ recogPrimApps = go where
   ; go expr = case expr of 
       { VarE name      -> goVar name
       ; AppE _ _       -> case recogAppsE expr of { Cons f args -> case f of 
-          { VarE n       -> appsE (goVar n) (map go args) 
+          { VarE n       -> case trieLookup n primops of
+              { Nothing     -> appsE (VarE n)         (map go args)
+              ; Just primop -> saturatePrimApp primop (map go args) }
           ; _            -> appsE (go    f) (map go args) } }
       ; LamE arg  body -> LamE  arg  (go body)
       ; LetE defs body -> LetE  (map goDefin defs) (go body)
@@ -1248,14 +1271,32 @@ data Value
   | ChrV Char
   | ConV Con (List Value)
   | LamV (Value -> Value)
+  | ThkV Env Term
+
+forceValue :: Value -> Value
+forceValue val = case val of { ThkV env tm -> eval env tm ; _ -> val }
 
 showValue :: Value -> String
 showValue value = case value of
   { IntV n -> showInt n
   ; ChrV c -> quoteChar c
-  ; ConV con args -> let { tag = Cons '#' (showInt con) } in case args of { Nil -> tag
+  ; ConV con args -> let { tag = append "Con#" (showInt con) } in case args of { Nil -> tag
     ; Cons _ _ -> parenString (unwords (Cons tag (map showValue args))) }
-  ; LamV _ -> "<lambda>"
+  ; LamV   _ -> "<lambda>"
+  ; ThkV env tm -> showValue (eval env tm) 
+  }
+
+eqValue :: Value -> Value -> Bool
+eqValue val1 val2 = case val1 of
+  { IntV i1 -> case val2 of { IntV i2 ->  eq i1 i2 ; ThkV e2 t2 -> eqValue val1 (eval e2 t2) ; _ -> False }
+  ; ChrV c1 -> case val2 of { ChrV c2 -> ceq c1 c2 ; ThkV e2 t2 -> eqValue val1 (eval e2 t2) ; _ -> False }
+  ; ConV con1 args1 -> case val2 of 
+      { ConV con2 args2 -> and3 (eq con1 con2) (eq (length args1) (length args2))
+                                (andList (zipWith eqValue args1 args2)) 
+      ; ThkV env2 tm2   -> eqValue val1 (eval env2 tm2)
+      ; _ -> False }
+  ; LamV _        -> False 
+  ; ThkV env1 tm1 -> eqValue (eval env1 tm1) val2
   }
 
 boolToValue :: Bool -> Value
@@ -1291,7 +1332,7 @@ valueToList :: Value -> List Value
 valueToList value = case value of
   { ConV con args -> ifte (neq con conCons) Nil
       (case mbPair args of { Nothing -> Nil ; Just pair -> case pair of
-        { Pair u v -> Cons u (valueToList value) } } ) }
+        { Pair u v -> Cons u (valueToList v) } } ) }
 
 stringToValue :: String -> Value
 stringToValue = compose listToValue (map charToValue)
@@ -1320,13 +1361,13 @@ evalfunBBB f v1 v2 = boolToValue (f (valueToBool v1) (valueToBool v2))
 unary   :: List a -> (a -> b)           -> b
 binary  :: List a -> (a -> a -> b)      -> b
 ternary :: List a -> (a -> a -> a -> b) -> b
-unary   args f = case args of { Cons x xs -> f x             ; Nil -> error "not enough arguments" }
-binary  args f = case args of { Cons x xs -> unary  xs (f x) ; Nil -> error "not enough arguments" }
-ternary args f = case args of { Cons x xs -> binary xs (f x) ; Nil -> error "not enough arguments" }
+unary   args f = case args of { Cons x xs -> f x             ; Nil -> error "unary: not enough arguments" }
+binary  args f = case args of { Cons x xs -> unary  xs (f x) ; Nil -> error "binary: not enough arguments" }
+ternary args f = case args of { Cons x xs -> binary xs (f x) ; Nil -> error "ternary: not enough arguments" }
 
 evalPrim :: Prim -> List Value -> Value
 evalPrim prim args = case prim of
-  { Error   -> unary   args (\msg -> error (valueToString msg))
+  { Error   -> unary   args (compose error valueToString)
   ; Negate  -> unary   args (evalfunII  negate)
   ; Plus    -> binary  args (evalfunIII plus  )
   ; Minus   -> binary  args (evalfunIII minus )
@@ -1335,14 +1376,15 @@ evalPrim prim args = case prim of
   ; Mod     -> binary  args (evalfunIII mod   )
   ; Chr     -> unary   args (compose3 charToValue chr valueToInt )
   ; Ord     -> unary   args (compose3 intToValue  ord valueToChar)
-  ; IFTE    -> error "this has to be implemented somewhere else because of lazyness"
+  ; IFTE    -> error "ifte: this has to be implemented somewhere else because of lazyness"
   ; Not     -> unary   args (evalfunBB  not )
   ; And     -> binary  args (evalfunBBB and )
   ; Or      -> binary  args (evalfunBBB or  )
-  ; GenEQ   -> error "not yet"
+  ; GenEQ   -> binary  args (\x y -> boolToValue (eqValue x y))
   ; IntEQ   -> binary  args (evalfunIIB eq  )
   ; IntLT   -> binary  args (evalfunIIB lt  )
   ; IntLE   -> binary  args (evalfunIIB le  )
+  ; IsEOF   -> unary   args (compose3 boolToValue isEOF   valueToUnit)
   ; GetChar -> unary   args (compose3 charToValue getChar valueToUnit)
   ; PutChar -> unary   args (compose3 unitToValue putChar valueToChar)
   }
@@ -1350,16 +1392,17 @@ evalPrim prim args = case prim of
 --------------------------------------------------------------------------------
 -- ** The evaluator
 
+-- in reverse order as usual
 type Env = List Value
 
 eval :: Env -> Term -> Value
 eval env term = case term of
-  { VarT idx     -> index idx env
+  { VarT idx     -> forceValue (index idx env)
   ; ConT con     -> ConV con Nil
   ; AppT e1 e2   -> case eval env e1 of
     { LamV fun      -> fun (eval env e2)
-    ; ConV con args -> ConV con (append args (singleton (eval env e2)))
-    ; _             -> error "application to non-lambda (int)"
+    ; ConV con args -> ConV con (snoc args (eval env e2))
+    ; _             -> error "application to non-lambda (int/char)"
     }
   ; PriT prim ts -> case prim of
     { IFTE -> ternary ts (lazyIFTE env)
@@ -1367,15 +1410,15 @@ eval env term = case term of
     ; Or   -> binary  ts (lazyOr   env)
     ; _    -> evalPrim prim (map (eval env) ts) }
   ; LamT body    -> LamV (\x -> eval (Cons x env) body)
-  ; CasT var brs -> case index var env of
+  ; CasT var brs -> case forceValue (index var env) of
     { ConV con args -> matchCon env con args brs
     ; _             -> error "branching on a non-constructor (lambda)"
     }
-  ; RecT n ls tm -> eval (append (reverse (map (eval env) ls)) env) tm
+  ; RecT n ls tm -> let { env' = append (reverse (map (ThkV env') ls)) env } in eval env' tm
   ; KstT lit     -> case lit of
-    { IntL k     -> IntV k
-    ; ChrL c     -> ChrV c
-    ; StrL _     -> error "string literals should not appear in core"
+    { IntL k       -> IntV k
+    ; ChrL c       -> ChrV c
+    ; StrL _       -> error "string literals should not appear in core"
     }
   }
 

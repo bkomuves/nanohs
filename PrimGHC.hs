@@ -7,10 +7,12 @@
 module PrimGHC where
 
 import qualified Prelude
-import qualified Control.Monad
 import qualified Data.Char
-import qualified System.IO.Unsafe as Unsafe
-import Prelude ( Int , Char , Eq , Show )
+import qualified System.IO          as IO
+import qualified System.IO.Unsafe   as Unsafe
+import qualified System.Environment as Env
+ 
+import Prelude     ( Int , Char , Eq , Show )
 import Data.String ( IsString(..) )
 import GHC.Exts    ( IsList  (..) )
 
@@ -79,8 +81,23 @@ lt x y = _fromGhcBool ((Prelude.<)  x y)
 le :: Int -> Int -> Bool
 le x y = _fromGhcBool ((Prelude.<=) x y)
 
+{-# NOINLINE error #-}
 error :: String -> a
 error msg = Prelude.error (_toGhcString msg)
+
+--------------------------------------------------------------------------------
+-- * IO
+
+-- maybe we should do a real IO monad here?
+-- but if we are strict just functions with side effects should work, and simpler...
+--
+-- data RealWorld       = RealWorld
+-- data WithRealWorld a = WithRealWorld RealWorld a
+-- type IO a = RealWorld -> WithRealWorld a
+
+{-# NOINLINE isEOF #-}
+isEOF :: Unit -> Bool
+isEOF = \_ -> _fromGhcBool (Unsafe.unsafePerformIO (IO.isEOF))
 
 {-# NOINLINE getChar #-}
 getChar :: Unit -> Char
@@ -89,6 +106,12 @@ getChar = \_ -> Unsafe.unsafePerformIO (Prelude.getChar)
 {-# NOINLINE putChar #-}
 putChar :: Char -> Unit
 putChar ch = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar ch) (Prelude.return Unit) )
+
+{-# NOINLINE getArg #-}
+getArg :: Unit -> String
+getArg = \_ -> case Unsafe.unsafePerformIO Env.getArgs of
+  []      -> Nil
+  (arg:_) -> (_fromGhcString arg)
 
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types
