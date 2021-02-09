@@ -42,6 +42,11 @@ main = do
   Prelude.putStrLn "\n----------------------------------\nCORE"
   Prelude.print core
 
+  let Pair statfuns lifted = coreToLifted core
+  Prelude.putStrLn "\n----------------------------------\nLIFTED"
+  Control.Monad.mapM_ Prelude.print (_toGhcList statfuns)
+  Prelude.print lifted
+
   let val = eval Nil core
   Prelude.putStrLn "\n----------------------------------\nRESULT"
   Prelude.print (showValue val)

@@ -30,7 +30,7 @@
 --
 
 {-# LANGUAGE NoImplicitPrelude  #-}
--- {- LANGUAGE Strict -}
+{- LANGUAGE Strict -}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings, OverloadedLists#-}
 
@@ -317,6 +317,38 @@ unzip xys = case xys of { Nil -> Pair Nil Nil ; Cons this rest -> case this of
   { Pair x y -> case unzip rest of { Pair xs ys -> Pair (Cons x xs) (Cons y ys) } } }
 
 --------------------------------------------------------------------------------
+-- ** Sets
+
+-- | We model sets as sorted lists. We would need an Ord instance so we only 
+-- do it for Int-s.
+type IntSet = List Int
+
+setEmpty :: IntSet
+setEmpty = Nil
+
+setMember :: Int -> IntSet -> Bool
+setMember = elem
+
+setSingleton :: Int -> IntSet
+setSingleton x = Cons x Nil
+
+setInsert :: Int -> IntSet -> IntSet
+setInsert k = go where 
+  { go set = case set of { Nil -> Cons k Nil ; Cons x xs -> case compare k x of 
+    { LT -> Cons k set ; EQ -> set ; GT -> Cons x (go xs) } } }
+
+setDelete :: Int -> IntSet -> IntSet
+setDelete k = go where 
+  { go set = case set of { Nil -> Nil ; Cons x xs -> case compare k x of 
+    { LT -> set ; EQ -> xs ; GT -> Cons x (go xs) } } }
+
+setUnion :: IntSet -> IntSet -> IntSet
+setUnion set1 set2 = flipFoldr setInsert set1 set2
+
+setUnions :: List IntSet -> IntSet
+setUnions = foldl setUnion setEmpty
+
+--------------------------------------------------------------------------------
 -- ** Characters
 
 singleQuoteC    = chr 39
@@ -487,8 +519,10 @@ trieToList = go where { go trie = case trie of { Node mb table -> let
 
 type State s a = s -> Pair s a
 
+runState  :: State s a -> s -> Pair s a
 evalState :: State s a -> s -> a
 execState :: State s a -> s -> s
+runState  f = f 
 evalState f = compose snd f
 execState f = compose fst f
 
@@ -497,6 +531,10 @@ sreturn x = \s -> Pair s x
 
 sfmap :: (a -> b) -> State s a -> State s b
 sfmap f action = \s -> case action s of { Pair s' x -> Pair s' (f x) }
+
+sliftA2 :: (a -> b -> c) -> State s a -> State s b -> State s c
+sliftA2 f action1 action2 = \s -> case action1 s of { Pair s' x -> 
+  case action2 s' of { Pair s'' y -> Pair s'' (f x y) } }
 
 sbind :: State s a -> (a -> State s b) -> State s b
 sbind f u = \s -> case f s of { Pair s' x -> u x s' } 
@@ -512,6 +550,9 @@ sput s = \_ -> Pair s Unit
 
 smodify :: (s -> s) -> State s Unit
 smodify f = \old -> Pair (f old) Unit
+
+smapM :: (a -> State s b) -> List a -> State s (List b)
+smapM f list = case list of { Nil -> sreturn Nil ; Cons x xs -> sliftA2 Cons (f x) (smapM f xs) }
 
 smapM_ :: (a -> State s b) -> List a -> State s Unit
 smapM_ f list = case list of { Nil -> sreturn Unit ; Cons x xs -> sseq (f x) (smapM_ f xs) }
@@ -1020,19 +1061,19 @@ tyDeclP = pbind  varP            (\name ->
 
 dataDeclP :: Parse TopLevel
 dataDeclP = pbind (keywordP "data") (\_ ->
-            pbind (many1 anyToken) (\toks -> preturn (TopDataDecl toks) ))
+            pbind (many1 anyToken ) (\toks -> preturn (TopDataDecl toks) ))
 
 tyAliasP :: Parse TopLevel
 tyAliasP = pbind (keywordP "type") (\_ ->
-           pbind (many1 anyToken) (\toks -> preturn (TopTyAlias toks) ))
+           pbind (many1 anyToken ) (\toks -> preturn (TopTyAlias toks) ))
 
 importP :: Parse TopLevel
 importP = pbind (keywordP "import") (\_ ->
-          pbind (many1 anyToken)   (\toks -> preturn (TopImport toks) ))
+          pbind (many1 anyToken   ) (\toks -> preturn (TopImport toks) ))
 
 moduleP :: Parse TopLevel
 moduleP = pbind (keywordP "module") (\_ ->
-          pbind (many1 anyToken)   (\toks -> preturn (TopModule toks) ))
+          pbind (many1 anyToken   ) (\toks -> preturn (TopModule toks) ))
 
 definP :: Parse Defin
 definP = pbind varP              (\name ->
@@ -1055,15 +1096,17 @@ nakedExprP = choice
   , pfmap listAppsE (many1 atomP)
   ]
 
+-- | We need an explicit eta-expansion here so that it doesn't loop in GHCi
+-- (and probably also itself)
 atomP :: Parse Expr
-atomP = choice
+atomP e = choice
   [ inParensP exprP     
   , pfmap LitE  literalP
   , pfmap ListE listExprP
   , caseExprP
   , letExprP
   , pfmap VarE varP
-  ]
+  ] e
 
 specP :: Special -> Parse Special
 specP spec = preplace spec (token (SpecTok spec))
@@ -1138,19 +1181,28 @@ type Idx = Int
 -- | Constructor index
 type Con = Int
 
+-- | We want to keep names for debugging \/ pretty printing
+data Named a = Named Name a deriving Show
+
+forgetName :: Named a -> a
+forgetName x = case x of { Named _ y -> y }
+
+nameOf :: Named a -> String
+nameOf x = case x of { Named n _ -> n }
+
 data Term
-  = VarT Idx
-  | ConT Con
-  | LamT Term
+  = VarT (Named Idx )
+  | ConT (Named Con )
+  | LamT (Named Term)
   | AppT Term Term
   | PriT Prim (List Term) 
-  | RecT Int (List Term) Term
+  | RecT Int (List (Named Term)) Term
   | CasT Idx (List BranchT)
   | KstT Literal
   deriving Show
 
 data BranchT
-  = BranchT Con Int Term
+  = BranchT (Named Con) Int Term
   | DefaultT Term
   deriving Show
 
@@ -1236,36 +1288,40 @@ scopeCheck :: DataConTable -> Scope -> Expr -> Term
 scopeCheck dcontable = go 0 where 
   { go level scope expr = case expr of
     { VarE  name -> case isDCon name of
-        { True  -> ConT (lookupCon dcontable   name)
-        ; False -> VarT (lookupVar level scope name) }
+        { True  -> ConT (Named name (lookupCon dcontable   name))
+        ; False -> VarT (Named name (lookupVar level scope name)) }
     ; AppE  e1 e2 -> AppT (go level scope e1) (go level scope e2)
-    ; LamE  name body -> LamT (go (inc level) (trieInsert name level scope) body)
+    ; LamE  name body -> LamT (Named name (go (inc level) (trieInsert name level scope) body))
     ; LetE  defs body -> let { n = length defs ; level' = plus level n
         ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name j scp } 
         ; scope' = foldl f scope (zip (map definedName defs) (rangeFrom level n)) 
-        } in RecT n (map (go level' scope') (map definedExpr defs)) (go level' scope' body)
+        } in RecT n (map (goDefin level' scope') defs) (go level' scope' body)
     ; CaseE what brs -> case what of
         { VarE name -> goCase level scope (lookupVar level scope name) brs
-        ; _         -> RecT 1 (singleton (go (inc level) scope what)) (goCase (inc level) scope 0 brs) }
+        ; _         -> RecT 1 (singleton (Named "$0" (go (inc level) scope what))) (goCase (inc level) scope 0 brs) }
     ; LitE  lit -> case lit of
         { StrL cs -> go level scope (ListE (map (\x -> LitE (ChrL x)) cs))
         ; _       -> KstT lit }
-    ; ListE exprs -> case exprs of { Nil -> ConT conNil
-        ; Cons e es -> AppT (AppT (ConT conCons) (go level scope e)) (go level scope (ListE es)) }
+    ; ListE exprs -> case exprs of { Nil -> ConT (Named "Nil" conNil)
+        ; Cons e es -> AppT (AppT (ConT (Named "Cons" conCons)) (go level scope e)) (go level scope (ListE es)) }
     ; PrimE prim args -> PriT prim (map (go level scope) args)
     } 
+  ; goDefin level scope defin = case defin of { Defin name what -> Named name (go level scope what) }
   ; goCase level scope idx branches = CasT idx (map goBranch branches) where 
     { goBranch branch = case branch of 
         { DefaultE         rhs -> DefaultT (go level scope rhs) 
         ; BranchE con args rhs -> let { n = length args ; level' = plus level n 
           ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name j scp }  
           ; scope' = foldl f scope (zip args (rangeFrom level n))          
-          } in BranchT  (lookupCon dcontable con) n (go level' scope' rhs) } } }
+          } in BranchT (Named con (lookupCon dcontable con)) n (go level' scope' rhs) } } }
 
 --------------------------------------------------------------------------------
 -- * The interpreter
 -- ** Runtime values
 
+-- | Note: for recursive lets, we need some delaying mechanism; currently
+-- this is done using the @ThkV@ (Thunk) constructor (which was added only
+-- for this purpose).
 data Value
   = IntV Int
   | ChrV Char
@@ -1273,6 +1329,7 @@ data Value
   | LamV (Value -> Value)
   | ThkV Env Term
 
+-- | Force thunks
 forceValue :: Value -> Value
 forceValue val = case val of { ThkV env tm -> eval env tm ; _ -> val }
 
@@ -1397,8 +1454,8 @@ type Env = List Value
 
 eval :: Env -> Term -> Value
 eval env term = case term of
-  { VarT idx     -> forceValue (index idx env)
-  ; ConT con     -> ConV con Nil
+  { VarT idx     -> forceValue (index (forgetName idx) env)
+  ; ConT con     -> ConV (forgetName con) Nil
   ; AppT e1 e2   -> case eval env e1 of
     { LamV fun      -> fun (eval env e2)
     ; ConV con args -> ConV con (snoc args (eval env e2))
@@ -1409,18 +1466,19 @@ eval env term = case term of
     ; And  -> binary  ts (lazyAnd  env)
     ; Or   -> binary  ts (lazyOr   env)
     ; _    -> evalPrim prim (map (eval env) ts) }
-  ; LamT body    -> LamV (\x -> eval (Cons x env) body)
+  ; LamT body    -> LamV (\x -> eval (Cons x env) (forgetName body))
   ; CasT var brs -> case forceValue (index var env) of
     { ConV con args -> matchCon env con args brs
     ; _             -> error "branching on a non-constructor (lambda)"
     }
-  ; RecT n ls tm -> let { env' = append (reverse (map (ThkV env') ls)) env } in eval env' tm
+  ; RecT n ls tm -> let { env' = append (reverse (map (mkThunk env') ls)) env } in eval env' tm
   ; KstT lit     -> case lit of
     { IntL k       -> IntV k
     ; ChrL c       -> ChrV c
     ; StrL _       -> error "string literals should not appear in core"
     }
   }
+  where { mkThunk env1 named = case named of { Named name body -> ThkV env1 body } }
 
 lazyIFTE :: Env -> Term -> Term -> Term -> Value
 lazyIFTE env tb tx ty = let { vb = eval env tb } in ifte (valueToBool vb) (eval env tx) (eval env ty) 
@@ -1438,7 +1496,7 @@ matchCon env con args = go where
     { Nil -> error "non-exhaustive patterns in case"
     ; Cons this rest -> case this of
       { DefaultT rhs            -> eval env rhs
-      ; BranchT bcon bnargs rhs -> ifte (and (eq con bcon) (eq nargs bnargs))
+      ; BranchT bcon bnargs rhs -> ifte (and (eq con (forgetName bcon)) (eq nargs bnargs))
           (eval (append (reverse args) env) rhs)
           (go rest) } } }
 
@@ -1446,38 +1504,145 @@ matchCon env con args = go where
 -- * The compiler
 -- ** Closure conversion
 
+-- | Index of statically known functions (and thunks); starts from zero
+type Static = Int
 
--- type Static = Int
--- 
--- -- | Variables can be a de Bruijn index, something from the closure
--- -- environment or a top-level definition
--- data VarF
---   = IdxF Idx
---   | EnvF Int
---   | TopF Static
---   deriving Show
--- 
--- data LambdaF
---   = LambdaF Int Lifted
---   deriving Show
--- 
--- data Lifted
---   = VarF VarF
---   | ConF Con
---   | KstF Literal
---   | AppF Lifted Lifted
---   | PriF Prim   (List VarF)
---   | CasF Lifted (List BranchF)
---   | LetF (List Lifted) Lifted
---   deriving Show
--- 
--- data BranchF
---   = BranchF Con Int Lifted
---   | DefaultF        Lifted
---   deriving Show
--- 
--- branchToLambda :: BranchF -> LambdaF
--- branchToLambda br = case br of { BranchF _con nargs body -> LambdaF nargs body }
+-- | Variables can be a de Bruijn index, or a top-level definition
+-- (the latter is only an optimization, so we don't have to allocate
+-- closures for static functions)
+data VarF
+  = IdxF Idx
+  | TopF Static
+  deriving Show
 
+-- | We lift all lambdas (and lets, and branch right hand sides) to top-level
+data Lifted
+  = VarF (Named VarF)
+  | ConF (Named Con )
+  | KstF Literal
+  | AppF Lifted Lifted
+  | PriF Prim   (List Lifted)
+  | CasF VarF (List BranchF)
+  | LamF ClosureF
+  | RecF Int (List (Named ClosureF)) Lifted
+  deriving Show
 
+data BranchF
+  = BranchF (Named Con) ClosureF
+  | DefaultF ClosureF
+  deriving Show
+
+-- | When allocating a closure, we create a new local environment
+-- by pruning the current environment. We also remember the number
+-- of lambda arguments (0 = thunk)
+data ClosureF = ClosureF Static (List Idx) Arity deriving Show
+
+-- | A static function is an arity together with a lifted body
+data StatFun = StatFun Arity Lifted deriving Show
+
+-- | A top-level definition is a name, a static index and a static function
+data TopLev = TopLev (Named Static) StatFun deriving Show
+
+recogLamsT :: Term -> Pair (List Name) Term
+recogLamsT term = case term of
+  { LamT namedBody -> case namedBody of { Named name body -> 
+      case recogLamsT body of { Pair names rhs -> Pair (Cons name names) rhs } }
+  ; _              -> Pair Nil term }
+
+-- | Figure out the part of the environment used by a term.
+-- Returns a set of /levels/
+pruneEnvironment :: Level -> Level -> Term -> IntSet
+pruneEnvironment boundary = go where 
+  { go level term = case term of
+    { VarT named  -> case named of { Named name idx -> 
+        let { j = minus level (inc idx) } 
+        in  ifte (lt j boundary) (setSingleton j) setEmpty } 
+    ; AppT t1 t2  -> setUnion (go level t1) (go level t2)
+    ; PriT _ args -> setUnions (map (go level) args)
+    ; LamT nbody  -> go (inc level) (forgetName nbody)
+    ; RecT n ts t -> let { level' = plus level n } 
+                     in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
+    ; CasT _ brs  -> setUnions (map (goBranch level) brs)
+    ; ConT _      -> setEmpty 
+    ; KstT _      -> setEmpty }
+  ; goBranch level branch = case branch of
+    { BranchT _ n rhs -> go (plus level n) rhs
+    ; DefaultT    rhs -> go       level    rhs } } 
+
+-- | The closure conversion monad. Note: the list is reverse order!
+type ClosM a = State (List TopLev) a
+
+-- | Take the head entry of top level lists, and add 1 to it's index
+nextStatic :: ClosM Static
+nextStatic = sbind sget (\list -> case list of { Nil -> sreturn 0 ; Cons toplev _ -> 
+  case toplev of { TopLev named _ -> case named of { Named name s -> sreturn (inc s) }}})
+
+-- addTopLev :: TopLev -> ClosM Unit
+-- addTopLev what = smodify (Cons what)
+
+addStatFun :: Name -> StatFun -> ClosM Static
+addStatFun name statfun = 
+  sbind nextStatic                                             (\statidx -> 
+  sbind (smodify (Cons (TopLev (Named name statidx) statfun))) (\_       -> sreturn statidx ))
+
+-- | The closure environment maps original levels to pruned de Bruijn indices
+-- relative to the boundary
+type ClosEnv = Map Level Idx
+
+-- | A multi-lambda 
+data LambdaT
+  = LambdaT Int Term
+  deriving Show
+
+-- | Closure-converting a lambda results in 1) a closure allocation
+-- and 2) a static function. The latter we just add to the list of
+-- of compiled stuff
+--
+-- The name is just a name for the resulting top-level definition
+-- (so debugging is easier), and the level is the level where the lambda
+-- starts (the \"boundary\" level)
+lambdaToClosure :: Name -> Level -> LambdaT -> ClosM ClosureF 
+lambdaToClosure name level lambda = case lambda of { LambdaT nargs body -> 
+  let { pruned   = pruneEnvironment level (plus level nargs) body 
+      ; npruned  = length pruned
+      ; envtable = zip pruned (reverse (map negate (range npruned)))
+      ; pr_idxs  = map (\j -> minus level j) pruned
+      }
+  in  sbind (closureConvert level envtable (plus level nargs) body) (\statbody -> 
+      sbind (addStatFun name (StatFun nargs statbody))              (\statidx  -> 
+      sreturn (ClosureF statidx pr_idxs nargs))) }
+
+coreToLifted :: Term -> Pair (List TopLev) Lifted
+coreToLifted term = case runState (closureConvert 0 Nil 0 term) Nil of
+  { Pair list main -> Pair (reverse list) main }
+
+closureConvert :: Level -> ClosEnv -> Level -> Term -> State (List TopLev) Lifted
+closureConvert boundary closEnv = go where
+  { go level term = case term of
+    { VarT named    -> sreturn (VarF (case named of { Named name idx -> 
+        let { j = minus level (inc idx) }
+        in  ifte (ge j boundary) (Named name (IdxF idx))
+              (case mapLookup j closEnv of
+                { Nothing -> error "closureConvert: fatal error: variable not in the pruned environment"
+                ; Just m  -> let { i = plus (minus level boundary) m } 
+                             in  Named name (IdxF i)
+                }) }))
+    ; ConT named    -> sreturn (ConF named)
+    ; KstT lit      -> sreturn (KstF lit  )
+    ; AppT t1 t2    -> sliftA2 AppF (go level t1) (go level t2)
+    ; PriT pri args -> sfmap (PriF pri) (smapM (go level) args)
+    ; LamT _        -> case recogLamsT term of { Pair args body -> 
+             sfmap LamF (lambdaToClosure "lambda" level (LambdaT (length args) body)) }
+    ; CasT i brs    -> sfmap (CasF (IdxF i)) (smapM (goBranch level) brs)    
+    ; RecT n nts tm -> let { level' = plus level n }  
+                       in  sliftA2 (RecF n) (smapM (goRec1 level') nts) (go level' tm) }
+  ; goRec1 level named = case named of { Named name tm -> 
+      sfmap (Named name) (lambdaToClosure (nameOf named) level (LambdaT 0 tm)) } 
+  ; goBranch level brs = case brs of
+    { BranchT named n rhs -> sfmap (BranchF named) (lambdaToClosure (nameOf named) level (LambdaT n rhs)) 
+    ; DefaultT        rhs -> sfmap (DefaultF     ) (lambdaToClosure "default"      level (LambdaT 0 rhs))
+    }}
+ 
 --------------------------------------------------------------------------------
+-- ** Code generation
+
