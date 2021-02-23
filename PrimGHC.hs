@@ -11,7 +11,9 @@ import qualified Data.Char
 import qualified System.IO          as IO
 import qualified System.IO.Unsafe   as Unsafe
 import qualified System.Environment as Env
- 
+import qualified System.Exit        as Exit
+import qualified Control.Exception  as Exc
+
 import Prelude     ( Int , Char , Eq , Show )
 import Data.String ( IsString(..) )
 import GHC.Exts    ( IsList  (..) )
@@ -26,6 +28,8 @@ data Bool = False | True deriving Show
 data List a = Nil | Cons a (List a) deriving (Eq) 
 
 type String = List Char
+
+data Maybe a = Nothing | Just a deriving Show
 
 --------------------------------------------------------------------------------
 -- * Built-ins \/ primops
@@ -95,23 +99,32 @@ error msg = Prelude.error (_toGhcString msg)
 -- data WithRealWorld a = WithRealWorld RealWorld a
 -- type IO a = RealWorld -> WithRealWorld a
 
-{-# NOINLINE isEOF #-}
-isEOF :: Unit -> Bool
-isEOF = \_ -> _fromGhcBool (Unsafe.unsafePerformIO (IO.isEOF))
+{-# NOINLINE exit #-}
+exit :: Int -> Unit
+exit 0 = Unsafe.unsafePerformIO (Exit.exitWith  Exit.ExitSuccess   )
+exit k = Unsafe.unsafePerformIO (Exit.exitWith (Exit.ExitFailure k))
+
+-- {-# NOINLINE isEOF #-}
+-- isEOF :: Unit -> Bool
+-- isEOF = \_ -> _fromGhcBool (Unsafe.unsafePerformIO (IO.isEOF))
 
 {-# NOINLINE getChar #-}
-getChar :: Unit -> Char
-getChar = \_ -> Unsafe.unsafePerformIO (Prelude.getChar)
+getChar :: Unit -> Maybe Char
+getChar = \_ -> Unsafe.unsafePerformIO (Exc.catch just handler) where
+  just :: IO.IO (Maybe Char)
+  just =  (Prelude.>>=) Prelude.getChar (\c -> Prelude.return (Just c))
+  handler :: Exc.IOException -> IO.IO (Maybe Char)
+  handler _ = Prelude.return Nothing
 
 {-# NOINLINE putChar #-}
 putChar :: Char -> Unit
 putChar ch = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar ch) (Prelude.return Unit) )
 
 {-# NOINLINE getArg #-}
-getArg :: Unit -> String
-getArg = \_ -> case Unsafe.unsafePerformIO Env.getArgs of
-  []      -> Nil
-  (arg:_) -> (_fromGhcString arg)
+getArg :: Int -> String
+getArg m = index m (Unsafe.unsafePerformIO Env.getArgs) where
+  index _ [] = Nil
+  index k (this:rest) = case k of { 0 -> _fromGhcString this ; _ -> index ((Prelude.-) k 1) rest } 
 
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types
