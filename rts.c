@@ -26,11 +26,16 @@ int     *StaticFunArities;
 heap_ptr static_heap;
 char   **ConstructorNames;
 
+// command line arguments
+int    ArgCount;
+char **ArgVector;
+
 // pointer tagging
 #define PTAG_PTR  0       // allocated heap object 
 #define PTAG_INT  1       // 61 bit integer (or char) literal
 #define PTAG_FUN  2       // static function - index, not pointer!
 #define PTAG_CON  4       // nullary data constructor
+#define PTAG_FILE 7       // FILE handle (we assume the C file pointer is an aligned pointer)
 
 // heap object tag word
 #define HTAG_DATACON(con_tag,con_arity)   (((con_arity)<<16) + ((con_tag  ) << 3) + 4)
@@ -53,13 +58,20 @@ char   **ConstructorNames;
 #define TO_STATIDX(ptr)  (((uint64_t)(ptr))>>3)
 #define FROM_STATIDX(j)  ((heap_ptr)(uint64_t)(((j)<<3) + PTAG_FUN))
 
-#define CON_False   0
-#define CON_True    1
-#define CON_Unit    2
-#define CON_Nil     3
-#define CON_Cons    4
-#define CON_Nothing 5
-#define CON_Just    6
+#define TO_FILE(ptr)     ((FILE*) ((((intptr_t)ptr)>>3)<<3) )
+#define FROM_FILE(fptr)  ( (heap_ptr) ( ((intptr_t)fptr) | PTAG_FILE ) )
+
+#define CON_False    0
+#define CON_True     1
+#define CON_Unit     2
+#define CON_Nil      3
+#define CON_Cons     4
+#define CON_Nothing  5
+#define CON_Just     6
+#define CON_ReadMode        7
+#define CON_WriteMode       8
+#define CON_AppendMode      9
+#define CON_ReadWriteMode  10
 
 #define FALSE    NULLARY_CON( CON_False   )
 #define TRUE     NULLARY_CON( CON_True    )
@@ -295,6 +307,32 @@ int rts_generic_eq(heap_ptr arg1, heap_ptr arg2) {
 }
 
 // -----------------------------------------------------------------------------
+// marshalling
+
+int rts_marshal_to_cstring(int nmax, char *target, heap_ptr source) {
+  heap_ptr ptr = source;
+  int i = 0;
+  while( i < nmax-1 && IS_HEAP_PTR(ptr) && (ptr[0] == HTAG_DATACON(CON_Cons,2)) ) {
+    int c = TO_INT(ptr[1]);
+    target[i++] = c;
+    ptr = (heap_ptr)(ptr[2]);
+  }  
+  target[i] = 0;
+  return i;
+}
+
+heap_ptr rts_marshal_from_cstring(const char *str) {
+  char c = str[0];
+  if (c != 0) {
+    heap_ptr obj = rts_allocate_datacon(CON_Cons,2);
+    obj[1] = (uint64_t) CHR_LITERAL(c);
+    obj[2] = (uint64_t) rts_marshal_from_cstring(str+1);
+    return obj;
+  }
+  else return NIL;
+}
+
+// -----------------------------------------------------------------------------
 // generic print
 
 void rts_generic_print_limited(heap_ptr obj, int budget) {
@@ -305,20 +343,14 @@ void rts_generic_print_limited(heap_ptr obj, int budget) {
     case PTAG_FUN:
       printf("static_%lld",TO_STATIDX(obj));
       break;
+    case PTAG_FILE:
+      printf("FILE(%p)",TO_FILE(obj));
+      break;
     case PTAG_CON: {
       // nullary constructor
       int64_t word = (int64_t)obj;
       int con_idx = (word & 0xffff) >> 3;
       printf("%s/0",ConstructorNames[con_idx]);
-//      switch(x) {
-//        case CON_False:   printf("False"  ); break;
-//        case CON_True:    printf("True"   ); break;
-//        case CON_Unit:    printf("Unit"   ); break;
-//        case CON_Nothing: printf("Nothing"); break;
-//        case CON_Nil:     printf("Nil"    ); break;
-//        default:
-//          printf("CON(%lld)", x);
-//        }
       break;
     }
     case PTAG_PTR: {
@@ -357,6 +389,7 @@ void rts_generic_print_limited(heap_ptr obj, int budget) {
       }
       break;
     }
+    default: printf("<INVALID>"); break;
   }
 }
 
@@ -376,29 +409,29 @@ void rts_debug_println(const char *str, heap_ptr obj) {
 
 // -----------------------------------------------------------------------------
 
-heap_ptr prim_Negate(heap_ptr arg1) { return FROM_INT ( - TO_INT (arg1) ); }
-heap_ptr prim_Not   (heap_ptr arg1) { return FROM_BOOL( ! TO_BOOL(arg1) ); }
+heap_ptr prim_Negate (heap_ptr arg1) { return FROM_INT ( - TO_INT (arg1) ); }
+heap_ptr prim_Not    (heap_ptr arg1) { return FROM_BOOL( ! TO_BOOL(arg1) ); }
 
-heap_ptr prim_Plus  (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) + TO_INT(arg2) ); }
-heap_ptr prim_Minus (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) - TO_INT(arg2) ); }
-heap_ptr prim_Times (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) * TO_INT(arg2) ); }
-heap_ptr prim_Div   (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) / TO_INT(arg2) ); }
-heap_ptr prim_Mod   (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) % TO_INT(arg2) ); }
+heap_ptr prim_Plus   (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) + TO_INT(arg2) ); }
+heap_ptr prim_Minus  (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) - TO_INT(arg2) ); }
+heap_ptr prim_Times  (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) * TO_INT(arg2) ); }
+heap_ptr prim_Div    (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) / TO_INT(arg2) ); }
+heap_ptr prim_Mod    (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) % TO_INT(arg2) ); }
 
-heap_ptr prim_BitAnd(heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) & TO_INT(arg2) ); }
-heap_ptr prim_BitOr (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) | TO_INT(arg2) ); }
-heap_ptr prim_BitXor(heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) ^ TO_INT(arg2) ); }
-heap_ptr prim_Shl   (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) << TO_INT(arg2) ); }
-heap_ptr prim_Shr   (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) >> TO_INT(arg2) ); }
+heap_ptr prim_BitAnd (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) & TO_INT(arg2) ); }
+heap_ptr prim_BitOr  (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) | TO_INT(arg2) ); }
+heap_ptr prim_BitXor (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) ^ TO_INT(arg2) ); }
+heap_ptr prim_ShiftL (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) << TO_INT(arg2) ); }
+heap_ptr prim_ShiftR (heap_ptr arg1, heap_ptr arg2) { return FROM_INT( TO_INT(arg1) >> TO_INT(arg2) ); }
 
-heap_ptr prim_Chr   (heap_ptr arg1) { return arg1; }
-heap_ptr prim_Ord   (heap_ptr arg1) { return arg1; }
+heap_ptr prim_Chr    (heap_ptr arg1) { return arg1; }
+heap_ptr prim_Ord    (heap_ptr arg1) { return arg1; }
 
-heap_ptr prim_GenEQ (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL(rts_generic_eq(arg1,arg2)); }
+heap_ptr prim_GenEQ  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL(rts_generic_eq(arg1,arg2)); }
 
-heap_ptr prim_IntEQ (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(arg1) == TO_INT(arg2) ); } 
-heap_ptr prim_IntLT (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(arg1) <  TO_INT(arg2) ); } 
-heap_ptr prim_IntLE (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(arg1) <= TO_INT(arg2) ); } 
+heap_ptr prim_IntEQ  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(arg1) == TO_INT(arg2) ); } 
+heap_ptr prim_IntLT  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(arg1) <  TO_INT(arg2) ); } 
+heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(arg1) <= TO_INT(arg2) ); } 
 
 // heap_ptr prim_And   (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_BOOL(arg1) && TO_BOOL(arg2) ); } 
 // heap_ptr prim_Or    (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_BOOL(arg1) || TO_BOOL(arg2) ); } 
@@ -408,7 +441,7 @@ heap_ptr prim_IntLE (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(ar
 
 // -----------------------------------------------------------------------------
 
-// getChar :: Unit -> Maybe Char
+// getChar# :: Unit -> Maybe Char
 heap_ptr prim_GetChar(heap_ptr arg1) {
   int c = getchar();
   if (c==EOF) { return NOTHING; } else { 
@@ -418,19 +451,19 @@ heap_ptr prim_GetChar(heap_ptr arg1) {
   }
 }
 
-// putChar :: Char -> Unit
+// putChar# :: Char -> Unit
 heap_ptr prim_PutChar(heap_ptr arg1) {
   putchar(TO_INT(arg1));
   return UNIT;
 }
 
-// exit :: Int -> Unit
+// exit# :: Int -> Unit
 heap_ptr prim_Exit(heap_ptr arg1) {
   exit(TO_INT(arg1));
   return UNIT;
 }
 
-// error :: String -> a
+// error# :: String -> a
 heap_ptr prim_Error(heap_ptr arg1) {
   heap_ptr ptr = arg1;
   fputc('*',stderr);
@@ -447,9 +480,74 @@ heap_ptr prim_Error(heap_ptr arg1) {
   return UNIT;
 }
 
+// getArg# :: Int -> Maybe String
+heap_ptr prim_GetArg(heap_ptr arg1) {
+  int j = TO_INT(arg1);
+  if ( (j >= 0) && (j < ArgCount - 1) ) {
+    heap_ptr obj = rts_allocate_datacon(CON_Just,1);
+    obj[1] = (uint64_t) rts_marshal_from_cstring(ArgVector[j+1]); 
+    return obj;
+  }
+  return NOTHING;
+}
+
 // -----------------------------------------------------------------------------
 
-void rts_initialize() {
+char *file_modes[] = { "r" , "w" , "a" , "rw" };
+
+const char* c_file_mode_str(heap_ptr con) { 
+  switch ((uint64_t)(con)) {
+    case ( 4 + 8 * CON_ReadMode      ): return file_modes[0];
+    case ( 4 + 8 * CON_WriteMode     ): return file_modes[1];
+    case ( 4 + 8 * CON_AppendMode    ): return file_modes[2];
+    case ( 4 + 8 * CON_ReadWriteMode ): return file_modes[3];
+  }
+  rts_internal_error("invalid file IO mode"); return NULL;
+}
+
+heap_ptr prim_StdIn () { return (FROM_FILE(stdin )); }
+heap_ptr prim_StdOut() { return (FROM_FILE(stdout)); }
+heap_ptr prim_StdErr() { return (FROM_FILE(stderr)); }
+
+// hOpenFile# :: FilePath -> IOMode -> Handle
+heap_ptr prim_OpenFile(heap_ptr fnarg, heap_ptr modearg) {
+  const char *mode = c_file_mode_str(modearg);
+  char fname[256];
+  rts_marshal_to_cstring(256,fname,fnarg);
+  FILE *handle = fopen(fname,mode);
+  return (FROM_FILE(handle));
+}
+
+// hGetChar# :: Handle -> Maybe Char
+heap_ptr prim_HGetChar(heap_ptr harg) {
+  FILE *h = TO_FILE(harg);
+  int c = fgetc( h );
+//  printf("||| hGetChar: %p %d\n",h,c);
+  if (c==EOF) { return NOTHING; } else { 
+    heap_ptr obj = rts_allocate_datacon(CON_Just,1);
+    obj[1] = (uint64_t)(CHR_LITERAL(c));
+    return obj;
+  }
+}
+
+// hPutChar# :: Handle -> Char -> Unit
+heap_ptr prim_HPutChar(heap_ptr harg, heap_ptr carg) {
+  fputc( TO_INT(carg) , TO_FILE(harg) );
+  return UNIT;
+}
+
+// hClose# :: Handle -> Unit
+heap_ptr prim_HClose(heap_ptr harg) {
+  fclose( TO_FILE(harg) );
+  return UNIT;
+}
+
+// -----------------------------------------------------------------------------
+
+void rts_initialize(int argc, char **argv) {
+  ArgCount  = argc;
+  ArgVector = argv;
+
   Stack_begin = (heap_ptr) malloc( 8 * STACK_SIZE );
   Heap_begin  = (heap_ptr) malloc( 8 * HEAP_SIZE  );
   Stack_end   = Stack_begin + STACK_SIZE;
@@ -477,7 +575,7 @@ void rts_initialize() {
       static_heap[i] = (uint64_t)obj;   
     }
   } 
-  
+
   // printf("initialized.\n");
 }
 

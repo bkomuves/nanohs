@@ -39,6 +39,8 @@ type String = List Char
 
 data Maybe a = Nothing | Just a deriving Show
 
+type Handle = IO.Handle
+
 --------------------------------------------------------------------------------
 -- * Built-ins \/ primops
 
@@ -69,11 +71,11 @@ bitOr = (Bits..|.)
 bitXor :: Int -> Int -> Int
 bitXor = Bits.xor
 
-shl :: Int -> Int -> Int
-shl = Bits.shiftL
+shiftL :: Int -> Int -> Int
+shiftL = Bits.shiftL
 
-shr :: Int -> Int -> Int
-shr = Bits.shiftR
+shiftR :: Int -> Int -> Int
+shiftR = Bits.shiftR
 
 chr :: Int -> Char
 chr = Data.Char.chr
@@ -115,15 +117,6 @@ error msg = Prelude.error (_toGhcString msg)
 --------------------------------------------------------------------------------
 -- * ML-style IO (we use the hash to distinguish from the IO monad)
 
-{-# NOINLINE exit# #-}
-exit# :: Int -> Unit
-exit# 0 = Unsafe.unsafePerformIO (Exit.exitWith  Exit.ExitSuccess   )
-exit# k = Unsafe.unsafePerformIO (Exit.exitWith (Exit.ExitFailure k))
-
--- {-# NOINLINE isEOF #-}
--- isEOF :: Unit -> Bool
--- isEOF = \_ -> _fromGhcBool (Unsafe.unsafePerformIO (IO.isEOF))
-
 {-# NOINLINE getChar# #-}
 getChar# :: Unit -> Maybe Char
 getChar# _ = Unsafe.unsafePerformIO (Exc.catch just handler) where
@@ -134,13 +127,63 @@ getChar# _ = Unsafe.unsafePerformIO (Exc.catch just handler) where
 
 {-# NOINLINE putChar# #-}
 putChar# :: Char -> Unit
-putChar# ch = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar ch) (Prelude.return Unit) )
+putChar# c = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar c) (Prelude.return Unit) )
+
+{-# NOINLINE exit# #-}
+exit# :: Int -> Unit
+exit# 0 = Unsafe.unsafePerformIO (Exit.exitWith  Exit.ExitSuccess   )
+exit# k = Unsafe.unsafePerformIO (Exit.exitWith (Exit.ExitFailure k))
 
 {-# NOINLINE getArg# #-}
-getArg# :: Int -> String
+getArg# :: Int -> Maybe String
 getArg# m = index m (Unsafe.unsafePerformIO Env.getArgs) where
-  index _ [] = Nil
-  index k (this:rest) = case k of { 0 -> _fromGhcString this ; _ -> index ((Prelude.-) k 1) rest } 
+  index _ [] = Nothing
+  index k (this:rest) = case k of { 0 -> Just (_fromGhcString this) ; _ -> index ((Prelude.-) k 1) rest } 
+
+----------------------------------------
+
+stdin :: Handle
+stdin = IO.stdin
+
+stdout :: Handle
+stdout = IO.stdout
+
+stderr :: Handle
+stderr = IO.stderr
+
+data IOMode
+  = ReadMode   
+  | WriteMode  
+  | AppendMode   
+  | ReadWriteMode 
+  deriving Show
+
+_toGhcIOMode :: IOMode -> IO.IOMode
+_toGhcIOMode mode = case mode of
+  ReadMode      -> IO.ReadMode       
+  WriteMode     -> IO.WriteMode     
+  AppendMode    -> IO.AppendMode    
+  ReadWriteMode -> IO.ReadWriteMode 
+
+{-# NOINLINE openFile# #-}
+openFile# :: String -> IOMode -> Handle
+openFile# fn mode = Unsafe.unsafePerformIO (IO.openFile (_toGhcString fn) (_toGhcIOMode mode))
+
+{-# NOINLINE hClose# #-}
+hClose# :: Handle -> Unit
+hClose# h = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hClose h) (Prelude.return Unit) ) 
+
+{-# NOINLINE hGetChar# #-}
+hGetChar# :: Handle -> Maybe Char
+hGetChar# h = Unsafe.unsafePerformIO (Exc.catch just handler) where
+  just :: IO.IO (Maybe Char)
+  just =  (Prelude.>>=) (IO.hGetChar h) (\c -> Prelude.return (Just c))
+  handler :: Exc.IOException -> IO.IO (Maybe Char)
+  handler _ = Prelude.return Nothing
+
+{-# NOINLINE hPutChar# #-}
+hPutChar# :: Handle -> Char -> Unit
+hPutChar# h c = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutChar h c) (Prelude.return Unit) )
 
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types

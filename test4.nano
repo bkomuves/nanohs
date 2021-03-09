@@ -1,5 +1,28 @@
 
-main = runIO action2
+main = runIO action6
+
+action6 = iobind getArgs (\list -> iosequence_
+  [ putStrLn (append "argc = " (showInt (length list)))
+  , iomapM_ putStrLn list
+  ])
+
+action5 =  (
+  iobind (openFile "a.txt" ReadMode) (\h -> 
+  iobind (hGetContents h) (\text ->
+  iobind (hClose h)       (\_ -> 
+  putStrLn text  ))))
+
+-- main = runIO (
+--   iobind (openFile "a.txt" ReadMode) (\h -> 
+--   iobind (hGetChar h)                (\mbc ->  
+--   iobind (case mbc of { Just c -> putChar c ; Nothing -> putStr "EOF" })  (\_ ->
+--          (ioreturn mbc)
+--   ))))
+
+-- action3 = iobind (readFile "a.txt" ReadMode) putStrLn
+
+-- main = runIO (iobind (readFile "a.txt" ReadMode) (\text -> putStrLn text))
+-- main = runIO (iobind (readFile "a.txt" ReadMode)
 
 action1 = ioseq (putChar '1') (putChar '2')
 
@@ -9,7 +32,8 @@ action2 = iosequence_
   , putStrLn "3 korte"
   ]
 
-----------------------------------
+--------------------------------------------------------------------------------
+-- ** IO Monad
 
 type IO a = Unit -> a
 
@@ -27,11 +51,26 @@ ioret_ = \_ -> Unit
 iobind :: IO a -> (a -> IO b) -> IO b
 iobind action u _ = u (action Unit) Unit
 
+ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
+ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
+
 ioseq :: IO a -> IO b -> IO b
 ioseq f g = iobind f (\_ -> g)
 
 iosequence_ :: List (IO a) -> IO Unit
 iosequence_ list = case list of { Nil -> ioret_ ; Cons a as -> ioseq a (iosequence_ as) }
+
+iomapM :: (a -> IO b) -> List a -> IO (List b)
+iomapM f list = case list of { Nil -> ioreturn Nil ; Cons x xs -> ioliftA2 Cons (f x) (iomapM f xs) }
+
+ioforM :: List a -> (a -> IO b) -> IO (List b)
+ioforM list f = iomapM f list
+
+iomapM_ :: (a -> IO b) -> List a -> IO Unit
+iomapM_ f list = case list of { Nil -> ioreturn Unit ; Cons x xs -> ioseq (f x) (iomapM_ f xs) }
+
+ioforM_ :: List a -> (a -> IO b) -> IO Unit
+ioforM_ list f = iomapM_ f list
 
 getChar :: IO (Maybe Char)
 getChar = getChar#
@@ -42,8 +81,13 @@ putChar c = \_ -> putChar# c
 exit :: Int -> IO Unit
 exit k = \_ -> exit# k
 
--- getArg :: Int -> IO String
--- getArg i = \_ -> getArg# i 
+getArg :: Int -> IO String
+getArg i = \_ -> getArg# i 
+
+getArgs :: IO (List String)
+getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
+  { Nothing   -> ioreturn Nil 
+  ; Just this -> iobind (go (inc k)) (\rest -> ioreturn (Cons this rest)) })}
 
 putStr :: String -> IO Unit
 putStr xs = case xs of  { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
@@ -51,7 +95,44 @@ putStr xs = case xs of  { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr
 putStrLn :: String -> IO Unit
 putStrLn str = ioseq (putStr str) (putChar (chr 10)) 
 
-----------------------------------
+type FilePath = String
+
+openFile :: FilePath -> IOMode -> IO Handle
+openFile fn mode = \_ -> openFile# fn mode
+
+hClose :: Handle -> IO Unit
+hClose h = \_ -> hClose# h
+
+hGetChar :: Handle -> IO (Maybe Char)
+hGetChar h = \_ -> hGetChar# h
+
+hPutChar :: Handle -> Char -> IO Unit
+hPutChar h c = \_ -> hPutChar# h c
+
+hGetContents :: Handle -> IO String
+hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
+  { Nothing -> ioreturn Nil 
+  ; Just y  -> iobind go (\ys -> ioreturn (Cons y ys)) }) }
+
+hPutStr :: Handle -> String -> IO Unit
+hPutStr h = go where { go xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (hPutChar h y) (go ys) } }
+
+hPutStrLn :: Handle -> String -> IO Unit
+hPutStrLn h str = ioseq (hPutStr h str) (hPutChar h (chr 10)) 
+
+withFile :: FilePath -> IOMode -> (Handle -> IO a) -> IO a
+withFile fn mode action =
+  iobind (openFile fn mode) (\handle -> 
+  iobind (action handle)    (\result -> 
+  iobind (hClose handle)    (\_ -> ioreturn result)))
+
+readFile :: FilePath -> IO String
+readFile fn = withFile fn ReadMode hGetContents
+
+writeFile :: FilePath -> String -> IO Unit
+writeFile fn text = withFile fn WriteMode (\h -> hPutStr h text)
+
+--------------------------------------------------------------------------------
 
 compose :: (b -> c) -> (a -> b) -> (a -> c)
 compose f g = \x -> f (g x)
@@ -92,6 +173,9 @@ range = rangeFrom 0
 rangeFrom :: Int -> Int -> List Int
 rangeFrom k n = ifte (gt n 0) (Cons k (rangeFrom (inc k) (dec n))) Nil
 
+length :: List a -> Int
+length ls = case ls of { Nil -> 0 ; Cons _ xs -> inc (length xs) }
+
 foldl :: (a -> b -> a) -> (a -> List b -> a)
 foldl f x0 list = go x0 list where
   { go x ls = case ls of { Nil -> x ; Cons y ys -> go (f x y) ys }
@@ -111,4 +195,21 @@ sum = foldl plus 0
 reverse :: List a -> List a
 reverse = foldl (\xs x -> Cons x xs) Nil 
 
+append :: List a -> List a -> List a
+append xs ys = case xs of { Nil -> ys ; Cons z zs -> Cons z (append zs ys) }
+
+append3 :: List a -> List a -> List a -> List a
+append3 xs ys zs = append xs (append ys zs)
+
+concat :: List (List a) -> List a
+concat lls = flipFoldr append lls Nil
+
+showNat :: Int -> String
+showNat n = ifte (lt n 0) (error "showNat: negative") (worker n) where
+  { worker n = ifte (eq n 0) "0" (reverse (go n))
+  ; go     n = ifte (eq n 0) Nil (Cons (chr (plus (mod n 10) 48)) (go (div n 10)))
+  }
+
+showInt :: Int -> String
+showInt n = ifte (ge n 0) (showNat n) (Cons '-' (showNat (negate n)))
 

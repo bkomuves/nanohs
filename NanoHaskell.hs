@@ -36,7 +36,7 @@
 --
 
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
-{- LANGUAGE Strict -}
+{-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings, OverloadedLists#-}
 
@@ -68,7 +68,6 @@ main = (showInt (sum (range 11)))
 -- * Prelude
 -- ** functions
 
--- had to move this into the 'PrimGHC' module
 -- data Unit = Unit deriving Show
 
 id :: a -> a
@@ -142,7 +141,6 @@ negativeDeBruijnRange n = rangeFrom (inc (negate n)) n
 --------------------------------------------------------------------------------
 -- ** Bool
 
--- Had to move this into the 'PrimGHC' module
 -- data Bool = True | False deriving Show
 
 -- These are primops for now so they can short-circuit
@@ -230,7 +228,6 @@ thd3 triple = case triple of { Triple _ _ z -> z }
 --------------------------------------------------------------------------------
 -- ** Lists
 
--- had to move this into the 'PrimGHC' module
 -- data List a = Nil | Cons a (List a) deriving (Eq)
 
 singleton :: a -> List a
@@ -418,7 +415,6 @@ isLower_ ch = or (ceq ch '_') (isLower ch)
 --------------------------------------------------------------------------------
 -- ** Strings
 
--- had to move this into the 'PrimGHC' module
 -- type String = List Char
 
 charToString :: Char -> String
@@ -593,11 +589,26 @@ ioret_ = \_ -> Unit
 iobind :: IO a -> (a -> IO b) -> IO b
 iobind action u _ = u (action Unit) Unit
 
+ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
+ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
+
 ioseq :: IO a -> IO b -> IO b
 ioseq f g = iobind f (\_ -> g)
 
 iosequence_ :: List (IO a) -> IO Unit
 iosequence_ list = case list of { Nil -> ioret_ ; Cons a as -> ioseq a (iosequence_ as) }
+
+iomapM :: (a -> IO b) -> List a -> IO (List b)
+iomapM f list = case list of { Nil -> ioreturn Nil ; Cons x xs -> ioliftA2 Cons (f x) (iomapM f xs) }
+
+ioforM :: List a -> (a -> IO b) -> IO (List b)
+ioforM list f = iomapM f list
+
+iomapM_ :: (a -> IO b) -> List a -> IO Unit
+iomapM_ f list = case list of { Nil -> ioreturn Unit ; Cons x xs -> ioseq (f x) (iomapM_ f xs) }
+
+ioforM_ :: List a -> (a -> IO b) -> IO Unit
+ioforM_ list f = iomapM_ f list
 
 getChar :: IO (Maybe Char)
 getChar = getChar#
@@ -608,14 +619,56 @@ putChar c = \_ -> putChar# c
 exit :: Int -> IO Unit
 exit k = \_ -> exit# k
 
-getArg :: Int -> IO String
+getArg :: Int -> IO (Maybe String)
 getArg i = \_ -> getArg# i 
+
+getArgs :: IO (List String)
+getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
+  { Nothing   -> ioreturn Nil 
+  ; Just this -> iobind (go (inc k)) (\rest -> ioreturn (Cons this rest)) })}
 
 putStr :: String -> IO Unit
 putStr xs = case xs of  { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
 
 putStrLn :: String -> IO Unit
 putStrLn str = ioseq (putStr str) (putChar (chr 10)) 
+
+type FilePath = String
+
+openFile :: FilePath -> IOMode -> IO Handle
+openFile fn mode = \_ -> openFile# fn mode
+
+hClose :: Handle -> IO Unit
+hClose h = \_ -> hClose# h
+
+hGetChar :: Handle -> IO (Maybe Char)
+hGetChar h = \_ -> hGetChar# h
+
+hPutChar :: Handle -> Char -> IO Unit
+hPutChar h c = \_ -> hPutChar# h c
+
+hGetContents :: Handle -> IO String
+hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
+  { Nothing -> ioreturn Nil 
+  ; Just y  -> iobind go (\ys -> ioreturn (Cons y ys)) }) }
+
+hPutStr :: Handle -> String -> IO Unit
+hPutStr h = go where { go xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (hPutChar h y) (go ys) } }
+
+hPutStrLn :: Handle -> String -> IO Unit
+hPutStrLn h str = ioseq (hPutStr h str) (hPutChar h (chr 10)) 
+
+withFile :: FilePath -> IOMode -> (Handle -> IO a) -> IO a
+withFile fn mode action =
+  iobind (openFile fn mode) (\handle -> 
+  iobind (action handle)    (\result -> 
+  iobind (hClose handle)    (\_ -> ioreturn result)))
+
+readFile :: FilePath -> IO String
+readFile fn = withFile fn ReadMode hGetContents
+
+writeFile :: FilePath -> String -> IO Unit
+writeFile fn text = withFile fn WriteMode (\h -> hPutStr h text)
 
 --------------------------------------------------------------------------------
 -- ** State monad
@@ -1033,8 +1086,6 @@ definedWhat defin = case defin of { Defin _ e -> e }
 
 type Program a = List (Defin a)
 
-type FilePath = String
-
 -- | We \"parse\" (well, recognize) type declarations, data declarations,
 -- type synonyms and imports, but we ignore them; this is simply so that the
 -- this source code can be a valid Haskell program and self-hosting at the
@@ -1111,9 +1162,10 @@ patternHead pat = case pat of
 
 data Prim
   = Negate | Plus | Minus | Times | Div | Mod | Chr | Ord 
-  | BitAnd | BitOr | BitXor | Shl | Shr
+  | BitAnd | BitOr | BitXor | ShiftL | ShiftR
   | IFTE | Not | And | Or | GenEQ | IntEQ | IntLT | IntLE
   | GetChar | PutChar | GetArg | Exit | Error 
+  | OpenFile | HClose | HGetChar | HPutChar | StdIn | StdOut | StdErr
   deriving (Eq,Show)
 
 isLazyPrim :: Prim -> Bool
@@ -1125,15 +1177,18 @@ isLazyPrim prim = case prim of
 
 showPrim :: Prim -> String
 showPrim prim = case prim of
-  { Negate  -> "Negate"  ; Plus    -> "Plus"    ; Minus   -> "Minus"
-  ; Times   -> "Plus"    ; Div     -> "Minus"   ; Mod     -> "Mod"
-  ; BitAnd  -> "BitAnd"  ; BitOr   -> "BitOr"   ; BitXor  -> "BitXor"
-  ; Shl     -> "Shl"     ; Shr     -> "Shr"
-  ; Chr     -> "Chr"     ; Ord     -> "Ord"     ; IFTE    -> "IFTE"
-  ; Not     -> "Not"     ; And     -> "And"     ; Or      -> "Or"
-  ; IntEQ   -> "IntEQ"   ; IntLT   -> "IntLT"   ; IntLE   -> "IntLE"
-  ; GenEQ   -> "GenEQ"   ; Error   -> "Error"   ; Exit    -> "Exit" 
-  ; GetChar -> "GetChar" ; PutChar -> "PutChar" ; GetArg  -> "GetArg" }
+  { Negate   -> "Negate"   ; Plus     -> "Plus"     ; Minus   -> "Minus"
+  ; Times    -> "Times"    ; Div      -> "Div"      ; Mod     -> "Mod"
+  ; BitAnd   -> "BitAnd"   ; BitOr    -> "BitOr"    ; BitXor  -> "BitXor"
+  ; ShiftL   -> "ShiftL"   ; ShiftR   -> "ShiftR"        
+  ; Chr      -> "Chr"      ; Ord      -> "Ord"      ; IFTE    -> "IFTE"
+  ; Not      -> "Not"      ; And      -> "And"      ; Or      -> "Or"
+  ; IntEQ    -> "IntEQ"    ; IntLT    -> "IntLT"    ; IntLE   -> "IntLE"
+  ; GenEQ    -> "GenEQ"    ; Error    -> "Error"    ; Exit    -> "Exit" 
+  ; GetChar  -> "GetChar"  ; PutChar  -> "PutChar"  ; GetArg  -> "GetArg" 
+  ; StdIn    -> "StdIn"    ; StdOut   -> "StdOut"   ; StdErr  -> "StdErr" 
+  ; HGetChar -> "HGetChar" ; HPutChar -> "HPutChar" ; HClose  -> "HClose" 
+  ; OpenFile -> "OpenFile" }
 
 type Arity = Int
 
@@ -1141,32 +1196,39 @@ data PrimOp = PrimOp Arity Prim deriving Show
 
 primops :: Trie PrimOp
 primops = trieFromList
-  [ Pair "error"    (PrimOp 1  Error  )
-  , Pair "negate"   (PrimOp 1  Negate )
-  , Pair "plus"     (PrimOp 2  Plus   )
-  , Pair "minus"    (PrimOp 2  Minus  )
-  , Pair "times"    (PrimOp 2  Times  )
-  , Pair "div"      (PrimOp 2  Div    )
-  , Pair "mod"      (PrimOp 2  Mod    )
-  , Pair "bitAnd"   (PrimOp 2  BitAnd ) 
-  , Pair "bitOr"    (PrimOp 2  BitOr  )
-  , Pair "bitXor"   (PrimOp 2  BitXor ) 
-  , Pair "shl"      (PrimOp 2  Shl    )
-  , Pair "shr"      (PrimOp 2  Shr    )
-  , Pair "chr"      (PrimOp 1  Chr    )
-  , Pair "ord"      (PrimOp 1  Ord    )
-  , Pair "ifte"     (PrimOp 3  IFTE   )
-  , Pair "not"      (PrimOp 1  Not    )
-  , Pair "and"      (PrimOp 2  And    )
-  , Pair "or"       (PrimOp 2  Or     )
-  , Pair "geq"      (PrimOp 2  GenEQ  )
-  , Pair "eq"       (PrimOp 2  IntEQ  )
-  , Pair "lt"       (PrimOp 2  IntLT  )
-  , Pair "le"       (PrimOp 2  IntLE  )
-  , Pair "getChar#" (PrimOp 1  GetChar)
-  , Pair "putChar#" (PrimOp 1  PutChar)
-  , Pair "getArg#"  (PrimOp 1  GetArg )
-  , Pair "exit#"    (PrimOp 1  Exit   )
+  [ Pair "error"     (PrimOp 1  Error   )
+  , Pair "negate"    (PrimOp 1  Negate  )
+  , Pair "plus"      (PrimOp 2  Plus    )
+  , Pair "minus"     (PrimOp 2  Minus   )
+  , Pair "times"     (PrimOp 2  Times   )
+  , Pair "div"       (PrimOp 2  Div     )
+  , Pair "mod"       (PrimOp 2  Mod     )
+  , Pair "bitAnd"    (PrimOp 2  BitAnd  ) 
+  , Pair "bitOr"     (PrimOp 2  BitOr   )
+  , Pair "bitXor"    (PrimOp 2  BitXor  ) 
+  , Pair "shiftL"    (PrimOp 2  ShiftL  )
+  , Pair "shiftR"    (PrimOp 2  ShiftR  )
+  , Pair "chr"       (PrimOp 1  Chr     )
+  , Pair "ord"       (PrimOp 1  Ord     )
+  , Pair "ifte"      (PrimOp 3  IFTE    )
+  , Pair "not"       (PrimOp 1  Not     )
+  , Pair "and"       (PrimOp 2  And     )
+  , Pair "or"        (PrimOp 2  Or      )
+  , Pair "geq"       (PrimOp 2  GenEQ   )
+  , Pair "eq"        (PrimOp 2  IntEQ   )
+  , Pair "lt"        (PrimOp 2  IntLT   )
+  , Pair "le"        (PrimOp 2  IntLE   )
+  , Pair "getChar#"  (PrimOp 1  GetChar )
+  , Pair "putChar#"  (PrimOp 1  PutChar )
+  , Pair "getArg#"   (PrimOp 1  GetArg  )
+  , Pair "exit#"     (PrimOp 1  Exit    )
+  , Pair "openFile#" (PrimOp 2  OpenFile)
+  , Pair "hClose#"   (PrimOp 1  HClose  )
+  , Pair "hGetChar#" (PrimOp 1  HGetChar)
+  , Pair "hPutChar#" (PrimOp 2  HPutChar)
+  , Pair "stdin"     (PrimOp 0  StdIn   )
+  , Pair "stdout"    (PrimOp 0  StdOut  )
+  , Pair "stderr"    (PrimOp 0  StdErr  )
   ]
 
 -- | From @((f x) y) z@ we create the list [f,x,y,z]
@@ -1545,16 +1607,22 @@ con_Nil     = 3
 con_Cons    = 4
 con_Nothing = 5
 con_Just    = 6
+con_ReadMode      = 7
+con_WriteMode     = 8
+con_AppendMode    = 9
+con_ReadWriteMode = 10
 
 type DConState = Pair Int DataConTable
 
 initialDConState :: DConState
-initialDConState = Pair 7 (trieFromList predefinedDataCons)
+initialDConState = Pair 11 (trieFromList predefinedDataCons)
 
 predefinedDataCons :: List (Pair String Int)
 predefinedDataCons =
   [ Pair "False" con_False , Pair "True" con_True , Pair "Unit"    con_Unit
-  , Pair "Nil"   con_Nil   , Pair "Cons" con_Cons , Pair "Nothing" con_Nothing , Pair "Just" con_Just ]
+  , Pair "Nil"   con_Nil   , Pair "Cons" con_Cons , Pair "Nothing" con_Nothing , Pair "Just" con_Just 
+  , Pair "ReadMode"   con_ReadMode   , Pair "WriteMode"     con_WriteMode        
+  , Pair "AppendMode" con_AppendMode , Pair "ReadWriteMode" con_ReadWriteMode ]
 
 -- | Collect data constructors from the source.
 --
@@ -1567,10 +1635,14 @@ predefinedDataCons =
 -- *  4 = Cons
 -- *  5 = Nothing
 -- *  6 = Just
--- *  7.. = user defined constructors
+-- *  7 = ReadMode
+-- *  8 = WriteMode
+-- *  9 = AppendMode
+-- * 10 = ReadWriteMode
+-- * 11.. = user defined constructors
 --
 -- We need to fix Int, Char, False, True, Unit, Nil, Cons, Just and Nothing
--- because the primops use them
+-- and the file modes because the primops use them
 --
 collectDataCons :: Program Expr -> DataConTable
 collectDataCons defins = snd (execState action initialDConState) where
@@ -2198,12 +2270,12 @@ liftedProgramToCode dcontable pair = case pair of { LProgram toplevs topidxs mai
     , addLines [ "" , "// ----------------------------------------" , "" ]
     , makeStaticFunctionTables toplevs
     , addLines [ "" , "// ----------------------------------------" , "" ]
-    , addLines [ "int main() {"
+    , addLines [ "int main(int argc, char **argv) {"
                , "StaticFunPointers = static_funptr_table;"
                , "StaticFunArities  = static_arity_table;" 
                , "ConstructorNames  = datacon_table;" ]
     , addWords [ "NStatic           = ", showInt ntoplevs , " ;   // number of static functions " ]
-    , addLines [ "rts_initialize();" , "// main " ]
+    , addLines [ "rts_initialize(argc,argv);" , "// main " ]
     , sbind (liftedToCode nfo main) (\result -> sseq
         (addWords [ "// printf(" , doubleQuoteStringLn "done." , ");" ])
         (addWords [ "rts_generic_println(" , result , ");" ]))
