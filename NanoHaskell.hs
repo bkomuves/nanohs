@@ -40,9 +40,6 @@
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings, OverloadedLists#-}
 
--- temporary while refactoring
-{-# LANGUAGE PatternSynonyms #-}
-
 module NanoHaskell where
 
 --------------------------------------------------------------------------------
@@ -1089,7 +1086,7 @@ listAppsE :: List Expr -> Expr
 listAppsE  list = case list of { Cons f args -> appsE f args ; Nil -> error "listAppsE" }
 
 --------------------------------------------------------------------------------
--- ** Pattern compiler
+-- ** TODO: Pattern compiler 
 
 data Pattern
   = SimP Name (List Name)         -- ^ simple pattern
@@ -1452,9 +1449,9 @@ data Atom
 --------------------------------------------------------------------------------
 -- Terms
 
-pattern VarT nvar = AtmT (VarA nvar)
-pattern ConT ncon = AtmT (ConA ncon)
-pattern KstT lit  = AtmT (KstA lit )
+-- pattern VarT nvar = AtmT (VarA nvar)
+-- pattern ConT ncon = AtmT (ConA ncon)
+-- pattern KstT lit  = AtmT (KstA lit )
 
 data Term
 --  = VarT (Named Var )
@@ -1530,7 +1527,7 @@ programToCoreProgram defins = CorePrg (map worker defins) main where
   ; worker def  = case def of { Defin name expr -> Defin name (exprToCore dconTable topLevScope expr) } 
   ; no_main_err = \_ -> error "entry point `main` not found" 
   ; main = case trieLookup "main" topLevScope of { Just varl -> case varl of
-      { TopL k -> VarT (Named "main" (TopV k)) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
+      { TopL k -> AtmT (VarA (Named "main" (TopV k))) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
 
 --------------------------------------------------------------------------------
 -- ** Data constructors
@@ -1653,7 +1650,7 @@ scopeCheck dcontable = go 0 where
         { StrL cs -> go level scope (ListE (map (\x -> LitE (ChrL x)) cs))
         ; _       -> AtmT (KstA lit) }
     ; ListE exprs -> case exprs of 
-        { Nil       -> ConT (Named "Nil" con_Nil)
+        { Nil       -> AtmT (ConA (Named "Nil" con_Nil))
 --        ; Cons e es -> AppT (AppT (ConT (Named "Cons" conCons)) (go level scope e)) (go level scope (ListE es)) }
         ; Cons e es -> go level scope (AppE (AppE (VarE "Cons") e) (ListE es)) }
     ; PrimE prim args -> case prim of { PrimOp _arity pri -> case isLazyPrim pri of 
@@ -1873,10 +1870,9 @@ type Env = List Value
 -- | Index of statically known functions (and thunks); starts from zero
 type Static = Int
 
--- tmp
-pattern VarF nvar = AtmF (VarA nvar)
-pattern ConF ncon = AtmF (ConA ncon)
-pattern KstF lit  = AtmF (KstA lit )
+-- pattern VarF nvar = AtmF (VarA nvar)
+-- pattern ConF ncon = AtmF (ConA ncon)
+-- pattern KstF lit  = AtmF (KstA lit )
 
 -- | We lift all lambdas (and lets, and branch right hand sides) to top-level
 data Lifted
@@ -2523,10 +2519,12 @@ applyClosure nfo closure args = case closure of { ClosureF cbody env fun_arity -
 applicationToCode :: StatInfo -> Lifted -> List Atom -> CodeGenM CodeLine
 applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ -> case fun of
   { LamF closure -> applyClosure nfo closure args
-  ; ConF named   -> let { nargs = length args} in case named of { Named dcon_name con -> withFreshVar "obj" (\obj -> sseq (ssequence_
-      [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
-      , copyEnvironmentTo' nfo "SP" obj 1 args
-      ]) (sreturn obj)) }
+  ; AtmF atom    -> case atom of
+    { ConA named   -> let { nargs = length args} in case named of { Named dcon_name con -> withFreshVar "obj" (\obj -> sseq (ssequence_
+        [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
+        , copyEnvironmentTo' nfo "SP" obj 1 args
+        ]) (sreturn obj)) }
+    ; _ -> sbind (evalToVar nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
   ; _ -> sbind (evalToVar nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
 
 --------------------------------------------------------------------------------

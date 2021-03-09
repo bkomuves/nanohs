@@ -48,7 +48,7 @@ main = do
   Prelude.putStrLn "\n----------------------------------\nLIFTED"
   Control.Monad.mapM_ Prelude.print (_toGhcList statfuns)
   Prelude.print lmain
-  Prelude.print topidxs
+  -- Prelude.print topidxs
 
   let code = runCodeGenM_ (liftedProgramToCode dconTrie lprogram)
   -- Prelude.putStrLn "\n----------------------------------\nASM"

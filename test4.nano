@@ -1,7 +1,76 @@
 
-main = sum (reverse (range 11))
+main = runIO action2
 
-f n = ifte (gt n 3) 5 10
+action1 = ioseq (putChar '1') (putChar '2')
+
+action2 = iosequence_
+  [ putStrLn "1 hello IO world !!!"
+  , putStrLn "2 alma"
+  , putStrLn "3 korte"
+  ]
+
+----------------------------------
+
+type IO a = Unit -> a
+
+runIO :: IO a -> a
+runIO action = action Unit
+
+ioreturn :: a -> IO a
+ioreturn x = \_ -> x
+
+ioret_ :: IO Unit
+ioret_ = \_ -> Unit
+
+-- | Note: we have to be very careful about how to implement bind!
+-- (because we are cheating with ML-style IO)
+iobind :: IO a -> (a -> IO b) -> IO b
+iobind action u _ = u (action Unit) Unit
+
+ioseq :: IO a -> IO b -> IO b
+ioseq f g = iobind f (\_ -> g)
+
+iosequence_ :: List (IO a) -> IO Unit
+iosequence_ list = case list of { Nil -> ioret_ ; Cons a as -> ioseq a (iosequence_ as) }
+
+getChar :: IO (Maybe Char)
+getChar = getChar#
+
+putChar :: Char -> IO Unit
+putChar c = \_ -> putChar# c
+
+exit :: Int -> IO Unit
+exit k = \_ -> exit# k
+
+-- getArg :: Int -> IO String
+-- getArg i = \_ -> getArg# i 
+
+putStr :: String -> IO Unit
+putStr xs = case xs of  { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
+
+putStrLn :: String -> IO Unit
+putStrLn str = ioseq (putStr str) (putChar (chr 10)) 
+
+----------------------------------
+
+compose :: (b -> c) -> (a -> b) -> (a -> c)
+compose f g = \x -> f (g x)
+
+listAnd xs = case xs of { Nil -> True ; Cons b bs -> and b (listAnd bs) }
+
+listOr  = go where { go xs = case xs of { Nil -> False ; Cons b bs -> or b (go bs) } }
+
+map :: (a -> b) -> List a -> List b
+map f = go where { go xs = case xs of { Nil -> Nil ; Cons x xs -> Cons (f x) (map f xs) } }
+
+for :: List a -> (a -> b) -> List b
+for xs f = map f xs
+
+filter :: (a -> Bool) -> List a -> List a
+filter f = go where
+  { go list = case list of
+     { Nil -> Nil ; Cons x xs -> case f x of
+       { False -> go xs ; True -> Cons x (go xs) } } }
 
 inc :: Int -> Int
 inc n = plus n 1
