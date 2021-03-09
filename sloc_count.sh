@@ -2,11 +2,12 @@
 
 SRC="NanoHaskell.hs"
 
-FULL=`cat              $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'` 
-ANNT=`grep "::"        $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
-TYPE=`grep "^type "    $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
-DATA=`grep "^data "    $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
-DCON=`grep "^  |"      $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
+FULL=`cat                $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'` 
+ANNT=`grep "::"          $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
+TYPE=`grep "^type "      $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
+DATA=`grep "^data "      $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
+DCON=`grep "^  |"        $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
+DERV=`grep "^  deriving" $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
 # ASML=`grep "^  , \""   $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
 
 HASKELL_CLOC=`cloc --quiet --csv NanoHaskell.hs | grep Haskell`
@@ -33,8 +34,9 @@ echo "type annotations  = $ANNT"
 echo "type aliases      = $TYPE"
 echo "data declarations = $DATA"
 echo "data constructors = $DCON"
+echo "deriving          = $DERV"
 
-IGNORED=`expr $ANNT + $TYPE + $DATA + $DCON`
+IGNORED=`expr $ANNT + $TYPE + $DATA + $DCON + $DERV`
 ESSENTIAL=`expr $HSLN - $IGNORED`
 
 echo "============================"

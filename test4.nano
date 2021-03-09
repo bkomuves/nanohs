@@ -1,0 +1,45 @@
+
+main = sum (reverse (range 11))
+
+f n = ifte (gt n 3) 5 10
+
+inc :: Int -> Int
+inc n = plus n 1
+
+dec :: Int -> Int
+dec n = minus n 1
+
+gt :: Int -> Int -> Bool
+gt x y = lt y x
+
+ge :: Int -> Int -> Bool
+ge x y = le y x
+
+-- | the list [0,1,...n-1]
+range :: Int -> List Int
+range = rangeFrom 0
+
+-- | the list [k,k+1,...k+n-1]
+rangeFrom :: Int -> Int -> List Int
+rangeFrom k n = ifte (gt n 0) (Cons k (rangeFrom (inc k) (dec n))) Nil
+
+foldl :: (a -> b -> a) -> (a -> List b -> a)
+foldl f x0 list = go x0 list where
+  { go x ls = case ls of { Nil -> x ; Cons y ys -> go (f x y) ys }
+  }
+
+flipFoldr :: (b -> a -> a) -> (List b -> a -> a)
+flipFoldr f list y0 = go list y0 where
+  { go ls y = case ls of { Nil -> y ; Cons x xs -> f x (go xs y) }
+  }
+
+foldr :: (b -> a -> a) -> (a -> List b -> a)
+foldr f x list = flipFoldr f list x
+
+sum :: List Int -> Int
+sum = foldl plus 0 
+
+reverse :: List a -> List a
+reverse = foldl (\xs x -> Cons x xs) Nil 
+
+

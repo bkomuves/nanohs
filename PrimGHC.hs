@@ -8,6 +8,7 @@ module PrimGHC where
 
 import qualified Prelude
 import qualified Data.Char
+import qualified Data.Bits          as Bits
 import qualified System.IO          as IO
 import qualified System.IO.Unsafe   as Unsafe
 import qualified System.Environment as Env
@@ -17,6 +18,13 @@ import qualified Control.Exception  as Exc
 import Prelude     ( Int , Char , Eq , Show )
 import Data.String ( IsString(..) )
 import GHC.Exts    ( IsList  (..) )
+
+import qualified Debug.Trace 
+debug :: Show a => List Char -> a -> b -> b 
+debug x y z = Debug.Trace.trace msg z where
+  msg   = Prelude.concat parts
+  parts :: [Prelude.String]
+  parts = [ ">>> " , _toGhcString x , " => " , Prelude.show y ]
 
 --------------------------------------------------------------------------------
 -- * Primitive types used by the primops
@@ -51,6 +59,21 @@ div = Prelude.div
 
 mod :: Int -> Int -> Int
 mod = Prelude.mod
+
+bitAnd :: Int -> Int -> Int
+bitAnd = (Bits..&.)
+
+bitOr :: Int -> Int -> Int
+bitOr = (Bits..|.)
+
+bitXor :: Int -> Int -> Int
+bitXor = Bits.xor
+
+shl :: Int -> Int -> Int
+shl = Bits.shiftL
+
+shr :: Int -> Int -> Int
+shr = Bits.shiftR
 
 chr :: Int -> Char
 chr = Data.Char.chr
