@@ -1,5 +1,5 @@
 
-{-# LANGUAGE NoImplicitPrelude  #-}
+{-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict, StrictData #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances, TypeFamilies #-}
 {-# LANGUAGE OverloadedStrings, OverloadedLists #-}
@@ -113,39 +113,32 @@ error :: String -> a
 error msg = Prelude.error (_toGhcString msg)
 
 --------------------------------------------------------------------------------
--- * IO
+-- * ML-style IO (we use the hash to distinguish from the IO monad)
 
--- maybe we should do a real IO monad here?
--- but if we are strict just functions with side effects should work, and simpler...
---
--- data RealWorld       = RealWorld
--- data WithRealWorld a = WithRealWorld RealWorld a
--- type IO a = RealWorld -> WithRealWorld a
-
-{-# NOINLINE exit #-}
-exit :: Int -> Unit
-exit 0 = Unsafe.unsafePerformIO (Exit.exitWith  Exit.ExitSuccess   )
-exit k = Unsafe.unsafePerformIO (Exit.exitWith (Exit.ExitFailure k))
+{-# NOINLINE exit# #-}
+exit# :: Int -> Unit
+exit# 0 = Unsafe.unsafePerformIO (Exit.exitWith  Exit.ExitSuccess   )
+exit# k = Unsafe.unsafePerformIO (Exit.exitWith (Exit.ExitFailure k))
 
 -- {-# NOINLINE isEOF #-}
 -- isEOF :: Unit -> Bool
 -- isEOF = \_ -> _fromGhcBool (Unsafe.unsafePerformIO (IO.isEOF))
 
-{-# NOINLINE getChar #-}
-getChar :: Unit -> Maybe Char
-getChar = \_ -> Unsafe.unsafePerformIO (Exc.catch just handler) where
+{-# NOINLINE getChar# #-}
+getChar# :: Unit -> Maybe Char
+getChar# _ = Unsafe.unsafePerformIO (Exc.catch just handler) where
   just :: IO.IO (Maybe Char)
   just =  (Prelude.>>=) Prelude.getChar (\c -> Prelude.return (Just c))
   handler :: Exc.IOException -> IO.IO (Maybe Char)
   handler _ = Prelude.return Nothing
 
-{-# NOINLINE putChar #-}
-putChar :: Char -> Unit
-putChar ch = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar ch) (Prelude.return Unit) )
+{-# NOINLINE putChar# #-}
+putChar# :: Char -> Unit
+putChar# ch = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar ch) (Prelude.return Unit) )
 
-{-# NOINLINE getArg #-}
-getArg :: Int -> String
-getArg m = index m (Unsafe.unsafePerformIO Env.getArgs) where
+{-# NOINLINE getArg# #-}
+getArg# :: Int -> String
+getArg# m = index m (Unsafe.unsafePerformIO Env.getArgs) where
   index _ [] = Nil
   index k (this:rest) = case k of { 0 -> _fromGhcString this ; _ -> index ((Prelude.-) k 1) rest } 
 

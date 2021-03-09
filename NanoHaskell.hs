@@ -35,7 +35,7 @@
 -- language.
 --
 
-{-# LANGUAGE NoImplicitPrelude  #-}
+{-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {- LANGUAGE Strict -}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings, OverloadedLists#-}
@@ -578,6 +578,49 @@ trieToList = go where { go trie = case trie of { Node mb table -> let
   in case mb of { Nothing -> rest ; Just y -> Cons (Pair Nil y) rest } } }
 
 --------------------------------------------------------------------------------
+-- ** IO Monad
+
+type IO a = Unit -> a
+
+runIO :: IO a -> a
+runIO action = action Unit
+
+ioreturn :: a -> IO a
+ioreturn x = \_ -> x
+
+ioret_ :: IO Unit
+ioret_ = \_ -> Unit
+
+-- | Note: we have to be very careful about how to implement bind!
+-- (because we are cheating with ML-style IO)
+iobind :: IO a -> (a -> IO b) -> IO b
+iobind action u _ = u (action Unit) Unit
+
+ioseq :: IO a -> IO b -> IO b
+ioseq f g = iobind f (\_ -> g)
+
+iosequence_ :: List (IO a) -> IO Unit
+iosequence_ list = case list of { Nil -> ioret_ ; Cons a as -> ioseq a (iosequence_ as) }
+
+getChar :: IO (Maybe Char)
+getChar = getChar#
+
+putChar :: Char -> IO Unit
+putChar c = \_ -> putChar# c
+
+exit :: Int -> IO Unit
+exit k = \_ -> exit# k
+
+getArg :: Int -> IO String
+getArg i = \_ -> getArg# i 
+
+putStr :: String -> IO Unit
+putStr xs = case xs of  { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
+
+putStrLn :: String -> IO Unit
+putStrLn str = ioseq (putStr str) (putChar (chr 10)) 
+
+--------------------------------------------------------------------------------
 -- ** State monad
 
 type State s a = s -> Pair s a
@@ -852,8 +895,8 @@ stringLiteralL =
   pbind (token doubleQuoteC)                 (\_  -> preturn xs)))
 
 identifierL :: Lexer Name
-identifierL = pbind _alphaL                                     (\x  ->
-              pbind (many (alternative alphaNumL (oneOf "_'"))) (\xs ->
+identifierL = pbind _alphaL                                      (\x  ->
+              pbind (many (alternative alphaNumL (oneOf "_'#"))) (\xs ->
               preturn (Cons x xs)))
 
 data Literal
@@ -1101,32 +1144,32 @@ data PrimOp = PrimOp Arity Prim deriving Show
 
 primops :: Trie PrimOp
 primops = trieFromList
-  [ Pair "error"   (PrimOp 1  Error  )
-  , Pair "negate"  (PrimOp 1  Negate )
-  , Pair "plus"    (PrimOp 2  Plus   )
-  , Pair "minus"   (PrimOp 2  Minus  )
-  , Pair "times"   (PrimOp 2  Times  )
-  , Pair "div"     (PrimOp 2  Div    )
-  , Pair "mod"     (PrimOp 2  Mod    )
-  , Pair "bitAnd"  (PrimOp 2  BitAnd ) 
-  , Pair "bitOr"   (PrimOp 2  BitOr  )
-  , Pair "bitXor"  (PrimOp 2  BitXor ) 
-  , Pair "shl"     (PrimOp 2  Shl    )
-  , Pair "shr"     (PrimOp 2  Shr    )
-  , Pair "chr"     (PrimOp 1  Chr    )
-  , Pair "ord"     (PrimOp 1  Ord    )
-  , Pair "ifte"    (PrimOp 3  IFTE   )
-  , Pair "not"     (PrimOp 1  Not    )
-  , Pair "and"     (PrimOp 2  And    )
-  , Pair "or"      (PrimOp 2  Or     )
-  , Pair "geq"     (PrimOp 2  GenEQ  )
-  , Pair "eq"      (PrimOp 2  IntEQ  )
-  , Pair "lt"      (PrimOp 2  IntLT  )
-  , Pair "le"      (PrimOp 2  IntLE  )
-  , Pair "getChar" (PrimOp 1  GetChar)
-  , Pair "putChar" (PrimOp 1  PutChar)
-  , Pair "getArg"  (PrimOp 1  GetArg )
-  , Pair "exit"    (PrimOp 1  Exit   )
+  [ Pair "error"    (PrimOp 1  Error  )
+  , Pair "negate"   (PrimOp 1  Negate )
+  , Pair "plus"     (PrimOp 2  Plus   )
+  , Pair "minus"    (PrimOp 2  Minus  )
+  , Pair "times"    (PrimOp 2  Times  )
+  , Pair "div"      (PrimOp 2  Div    )
+  , Pair "mod"      (PrimOp 2  Mod    )
+  , Pair "bitAnd"   (PrimOp 2  BitAnd ) 
+  , Pair "bitOr"    (PrimOp 2  BitOr  )
+  , Pair "bitXor"   (PrimOp 2  BitXor ) 
+  , Pair "shl"      (PrimOp 2  Shl    )
+  , Pair "shr"      (PrimOp 2  Shr    )
+  , Pair "chr"      (PrimOp 1  Chr    )
+  , Pair "ord"      (PrimOp 1  Ord    )
+  , Pair "ifte"     (PrimOp 3  IFTE   )
+  , Pair "not"      (PrimOp 1  Not    )
+  , Pair "and"      (PrimOp 2  And    )
+  , Pair "or"       (PrimOp 2  Or     )
+  , Pair "geq"      (PrimOp 2  GenEQ  )
+  , Pair "eq"       (PrimOp 2  IntEQ  )
+  , Pair "lt"       (PrimOp 2  IntLT  )
+  , Pair "le"       (PrimOp 2  IntLE  )
+  , Pair "getChar#" (PrimOp 1  GetChar)
+  , Pair "putChar#" (PrimOp 1  PutChar)
+  , Pair "getArg#"  (PrimOp 1  GetArg )
+  , Pair "exit#"    (PrimOp 1  Exit   )
   ]
 
 -- | From @((f x) y) z@ we create the list [f,x,y,z]
@@ -1760,9 +1803,9 @@ evalPrim prim args = case prim of
   ; IntEQ   -> binary  args (evalfunIIB eq  )
   ; IntLT   -> binary  args (evalfunIIB lt  )
   ; IntLE   -> binary  args (evalfunIIB le  )
-  ; GetChar -> unary   args (compose3 maybeCharToValue getChar valueToUnit)
-  ; PutChar -> unary   args (compose3 unitToValue      putChar valueToChar)
-  ; Exit    -> unary   args (compose3 unitToValue      exit    valueToInt )
+  ; GetChar -> unary   args (compose3 maybeCharToValue (\_ -> getChar   Unit) valueToUnit)
+  ; PutChar -> unary   args (compose3 unitToValue      (\c -> putChar c Unit) valueToChar)
+  ; Exit    -> unary   args (compose3 unitToValue      (\k -> exit    k Unit) valueToInt )
 --  ; GetArg  -> ??? where should the interpreter get the arguments ???
 --  ; IsEOF   -> unary   args (compose3 boolToValue isEOF   valueToUnit)
   ; _       -> error "evalPrim: unimplemented primop"
@@ -2166,7 +2209,7 @@ liftedProgramToCode dcontable pair = case pair of { LProgram toplevs topidxs mai
     , addWords [ "NStatic           = ", showInt ntoplevs , " ;   // number of static functions " ]
     , addLines [ "rts_initialize();" , "// main " ]
     , sbind (liftedToCode nfo main) (\result -> sseq
-        (addWords [ "printf(" , doubleQuoteStringLn "done." , ");" ])
+        (addWords [ "// printf(" , doubleQuoteStringLn "done." , ");" ])
         (addWords [ "rts_generic_println(" , result , ");" ]))
     , addLines [ "exit(0);" , "}" ]
     ] }

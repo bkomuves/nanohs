@@ -433,11 +433,16 @@ heap_ptr prim_Exit(heap_ptr arg1) {
 // error :: String -> a
 heap_ptr prim_Error(heap_ptr arg1) {
   heap_ptr ptr = arg1;
+  fputc('*',stderr);
+  fputc('*',stderr);
+  fputc('*',stderr);
+  fputc(' ',stderr);
   while( IS_HEAP_PTR(ptr) && (ptr[0] == HTAG_DATACON(CON_Cons,2)) ) {
     int c = TO_INT(ptr[1]);
     fputc(c,stderr);
     ptr = (heap_ptr)(ptr[2]);
   }  
+  fputc('\n',stderr);
   exit(666);
   return UNIT;
 }
@@ -472,7 +477,8 @@ void rts_initialize() {
       static_heap[i] = (uint64_t)obj;   
     }
   } 
-  printf("initialized.\n");
+  
+  // printf("initialized.\n");
 }
 
 // -----------------------------------------------------------------------------
