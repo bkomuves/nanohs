@@ -1,5 +1,13 @@
 
-main = runIO action6
+
+main = runIO (putStrLn text2)
+
+-- action7 = iobind (readFile "a.txt" ReadMode) (\text -> putStrLn text)
+-- action7 = iobind (withFile "a.txt" ReadMode hGetContents) (\text -> putStrLn (unlines (map ff (lines text))))
+
+text  = unlines [ "alma" , "korte" , "szilva" ]
+text2 = unlines (map ff (lines text))
+ff x  = append ">>> " x
 
 action6 = iobind getArgs (\list -> iosequence_
   [ putStrLn (append "argc = " (showInt (length list)))
@@ -165,6 +173,12 @@ gt x y = lt y x
 ge :: Int -> Int -> Bool
 ge x y = le y x
 
+ceq :: Char -> Char -> Bool
+ceq c d = eq (ord c) (ord d)
+
+cneq :: Char -> Char -> Bool
+cneq c d = not (ceq c d)
+
 -- | the list [0,1,...n-1]
 range :: Int -> List Int
 range = rangeFrom 0
@@ -212,4 +226,41 @@ showNat n = ifte (lt n 0) (error "showNat: negative") (worker n) where
 
 showInt :: Int -> String
 showInt n = ifte (ge n 0) (showNat n) (Cons '-' (showNat (negate n)))
+
+
+takeWhile :: (a -> Bool) -> List a -> List a
+takeWhile cond = go where
+  { go ls = case ls of { Nil -> Nil ; Cons x xs -> case cond x of
+    { True -> Cons x (go xs) ; False -> Nil } } }
+
+dropWhile :: (a -> Bool) -> List a -> List a
+dropWhile cond = go where
+  { go ls = case ls of { Nil -> Nil ; Cons x xs -> case cond x of
+    { True -> go xs ; False -> xs } } }
+
+span :: (a -> Bool) -> List a -> Pair (List a) (List a)
+span cond xs = Pair (takeWhile cond xs) (dropWhile cond xs)
+
+--------------------------------------------------------------------------------
+
+intercalate :: List a -> List (List a) -> List a
+intercalate sep = go where
+  { go xss = case xss of
+    { Nil -> Nil ; Cons ys yss -> case yss of
+      { Nil -> ys
+      ; _   -> append ys (append sep (go yss)) } } }
+
+unwords :: List String -> String
+unwords = intercalate (Cons ' '      Nil)
+
+unlines :: List String -> String
+unlines = intercalate (Cons newlineC Nil)
+
+newlineC        = chr 10
+
+lines :: String -> List String
+lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newlineC) xs of
+  { Pair this rest -> case rest of { Nil -> Cons this Nil ; Cons _ ys -> Cons this (lines ys) } } }
+
+----
 

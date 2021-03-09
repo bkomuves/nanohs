@@ -20,11 +20,11 @@ typedef heap_ptr generic_fun_t();
 
 // We would need to align static function pointers, so we just introduce
 // an extra indirection and use indices for simplicity. We also need the arities.
-int      NStatic;
-void   **StaticFunPointers;
-int     *StaticFunArities;
-heap_ptr static_heap;
-char   **ConstructorNames;
+int       NStatic;
+void    **StaticFunPointers;
+int      *StaticFunArities;
+char    **ConstructorNames;
+stack_ptr static_stack;
 
 // command line arguments
 int    ArgCount;
@@ -240,7 +240,7 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
 // -----------------------------------------------------------------------------
 // force thunks (only used when there are non-lambdas present in letrec)
 
-heap_ptr rts_force_thunk(heap_ptr obj) {
+heap_ptr rts_force_value(heap_ptr obj) {
   switch(PTAG_OF(obj)) {
     // closure or data constructor
     case PTAG_PTR: {
@@ -267,6 +267,13 @@ heap_ptr rts_force_thunk(heap_ptr obj) {
     // anything else
     default: return obj;
   }
+}
+
+heap_ptr rts_force_thunk_at(stack_ptr ptr) {
+  heap_ptr old = (heap_ptr)ptr[0];
+  heap_ptr val = rts_force_value(old);
+  ptr[0] = (uint64_t) val;
+  return val;
 }
 
 // -----------------------------------------------------------------------------
@@ -555,13 +562,13 @@ void rts_initialize(int argc, char **argv) {
   SP = Stack_begin;
   HP = Heap_begin;
 
-  // initialize static heap. This simulates a top-level letrec, but with a 
+  // initialize static stack. This simulates a top-level letrec, but with a 
   // letrec we couldn't really optimize the fully static function calls?
-  static_heap = (heap_ptr) malloc( 8 * NStatic );
+  static_stack = (heap_ptr) malloc( 8 * NStatic );
   for(int i=0;i<NStatic;i++) {
     int   arity  = StaticFunArities [i];
     heap_ptr obj = rts_allocate_closure(i,0,arity);
-    static_heap[i] = (uint64_t)obj;   
+    static_stack[i] = (uint64_t)obj;   
   }
 
   // evaluate thunks (this includes functions which looks like CAFs!!!)
@@ -572,7 +579,7 @@ void rts_initialize(int argc, char **argv) {
       // thunk; we have to evaluate it
 //      printf("evaluating static thunk %d\n",i);
       heap_ptr obj = rts_static_call(i); // funptr);
-      static_heap[i] = (uint64_t)obj;   
+      static_stack[i] = (uint64_t)obj;   
     }
   } 
 

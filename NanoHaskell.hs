@@ -478,8 +478,9 @@ intercalate sep = go where
       ; _   -> append ys (append sep (go yss)) } } }
 
 unwords :: List String -> String
-unlines :: List String -> String
 unwords = intercalate (Cons ' '      Nil)
+
+unlines :: List String -> String
 unlines = intercalate (Cons newlineC Nil)
 
 lines :: String -> List String
@@ -2245,7 +2246,7 @@ makeStaticFunctionTables toplevs = sseq ptrs arities where
       , sforM_ (zipFirstRest ("  { ") ("  , ") toplevs) (\pair -> case pair of { Pair prefix toplev ->
           case toplev of { TopLev named statfun -> case named of { Named name static ->
             case statfun of { StatFun envsize arity lifted ->
-              addWords [ prefix , showInt envsize , " + " , showInt arity  ] }}}})
+              addWords [ prefix , showInt envsize , " + " , showInt arity , "    // static_" , showInt static , " = " , name ] }}}})
       , addLines [ "  };"  ] ]
   }
 
@@ -2320,7 +2321,7 @@ data StatInfo = StatInfo (List Static) deriving Show
 closureToCode' :: StatInfo -> ClosureF -> CodeGenM CodeLine
 closureToCode' nfo closure = case closure of { ClosureF sbody env arity -> case sbody of 
   { StaticBody static -> case env of
-    { Nil -> sreturn (concat [ "static_heap[" , showInt static , "]" ])
+    { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
     ; _   -> let { envsize = length env } in withFreshVar "closure" (\var -> sseq3
       (addWords [ "heap_ptr " , var , " = rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ])
       (copyEnvironmentTo nfo "SP" var 2 env)
@@ -2335,7 +2336,7 @@ closureToCode nfo closure = case closure of { ClosureF sbody env arity -> case s
   ; StaticBody _ -> ifte (gt arity 0)
       (closureToCode' nfo closure)
       (sbind (closureToCode' nfo closure) (\thunk -> withFreshVar "val" (\val -> sseq
-        (addWords [ "heap_ptr " , val , " = rts_force_thunk( (heap_ptr)(" , thunk , ") );" ])
+        (addWords [ "heap_ptr " , val , " = rts_force_value( (heap_ptr)(" , thunk , ") );" ])
         (sreturn val)))) }}
 
 --    (sforM_ (zipIndex env) (\pair -> case pair of { Pair j idx -> 
@@ -2350,15 +2351,23 @@ closureToCode nfo closure = case closure of { ClosureF sbody env arity -> case s
 --           , swhen (not (isNil env)) (addWords [ "heap_ptr " , tgt , " = (heap_ptr) " , target , ";" ])
 --           , copyEnvironmentTo nfo post_sp tgt 2 env ] )}})
 
-evalToVar :: StatInfo -> Name -> Lifted -> CodeGenM Name
-evalToVar nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
+evalToReg :: StatInfo -> Name -> Lifted -> CodeGenM Name
+evalToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
   (addWords [ "heap_ptr " , var , " = " , res , ";"]) (sreturn var)))
 
-loadVar ::  StatInfo -> Var -> CodeLine
-loadVar nfo var = case var of
+-- does not force thunks
+loadVar' ::  StatInfo -> Var -> CodeLine
+loadVar' nfo var = case var of
   { IdxV i -> concat [ "DE_BRUIJN(" , showInt i , ")" ]
   ; TopV j -> case nfo of { StatInfo idxlist ->
-                concat [ "(heap_ptr) static_heap[" , showInt (index j idxlist) , "]" ] }}
+                concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }}
+
+-- forces thunks
+loadVar ::  StatInfo -> Var -> CodeLine
+loadVar nfo var = case var of
+  { IdxV i -> concat [ "rts_force_thunk_at( SP - " , showInt (inc i) , ")" ]
+  ; TopV j -> case nfo of { StatInfo idxlist ->
+                concat [ "rts_force_thunk_at( static_stack + " , showInt (index j idxlist) , ")" ] }}
 
 loadAtom :: StatInfo -> Atom -> CodeLine
 loadAtom nfo atom = case atom of
@@ -2413,7 +2422,7 @@ letToCode nfo cls body =
   sbind (closureToCode nfo cls)     (\val1 -> 
   sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ]) (\_ ->
   sbind (addWords [ loc  , "[0] = (uint64_t) " , val1 , ";" ]) (\_ ->
-  sbind (evalToVar nfo "body" body) (\res -> 
+  sbind (evalToReg nfo "body" body) (\res -> 
   sbind (addDefin obj res)          (\_   ->    
   sbind (addWords [ "SP = " , loc , ";" ]) (\_ -> 
   sreturn obj ))))))))
@@ -2430,7 +2439,7 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
           { InlineBody lifted -> sbind (functionBodyToCode nfo (StatFun (length env) arity lifted)) (\res ->
              addWords [ pre_sp, "[", showInt j , "] = (uint64_t) (" , res , " );" ]) 
           ; StaticBody static -> case env of
-             { Nil -> addWords [ pre_sp, "[", showInt j , "] = static_heap[" , showInt static , "];" ] 
+             { Nil -> addWords [ pre_sp, "[", showInt j , "] = static_stack[" , showInt static , "];" ] 
              ; _   -> let { envsize = length env } in 
                 addWords [  pre_sp, "[", showInt j , "] = (uint64_t) rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ] 
              }}}})
@@ -2443,34 +2452,14 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
               (copyEnvironmentTo nfo "SP" tgt 2 env) )} }}})
 -- evaluate thunks
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of {
-        ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) (withFreshVar "val" (\val -> sseq
-          (addWords [ "heap_ptr " , val , " = rts_force_thunk( (heap_ptr) " , pre_sp, "[", showInt j , "] );" ])
-          (addWords [ pre_sp, "[", showInt j , "] = (uint64_t) " , val , " ;" ]) )) }})
-    , sbind (evalToVar nfo "body" body) (\res -> addDefin obj res)   
+        ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) 
+          (addWords [ "rts_force_thunk_at( " , pre_sp, " + ", showInt j , " );" ]) }})
+--        ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) (withFreshVar "val" (\val -> sseq
+--          (addWords [ "heap_ptr " , val , " = rts_force_value( (heap_ptr) " , pre_sp, "[", showInt j , "] );" ])
+--          (addWords [ pre_sp, "[", showInt j , "] = (uint64_t) " , val , " ;" ]) )) }})
+    , sbind (evalToReg nfo "body" body) (\res -> addDefin obj res)   
     , addWords [ "SP = " , pre_sp , ";" ]
     ]) (sreturn obj))
-
--------
--- 
---     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> sbind (closureToCode' nfo cls) (\res ->
---         addWords [ pre_sp, "[", showInt j , "] = (uint64_t) (" , res , " );" ]) })
--- 
---   { StaticBody static -> case env of
---     { Nil -> sreturn (concat [ "static_heap[" , showInt static , "]" ])
---     ; _   -> let { envsize = length env } in withFreshVar "closure" (\var -> sseq3
---       (addWords [ "heap_ptr " , var , " = rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ])
---       (copyEnvironmentTo nfo "SP" var 2 env)
---       (sreturn var)) }
---   ; InlineBody lifted -> functionBodyToCode nfo (StatFun (length env) arity lifted)
---   }}
-
--- case cls of { ClosureF static env arity -> 
--- -- TOOD: optimize for env = Nil
--- -- why are we not using closureToCode here??
---         let { target = concat [ pre_sp, "[", showInt j , "]" ] } in withFreshVar "tgt" (\tgt -> ssequence_ 
---           [ addWords [ target , " = (uint64_t) rts_allocate_closure( " , showInt static , " , " , showInt (length env) , " , " , showInt arity , " );" ]
---           , swhen (not (isNil env)) (addWords [ "heap_ptr " , tgt , " = (heap_ptr) " , target , ";" ])
---           , copyEnvironmentTo nfo post_sp tgt 2 env ] )}})
 
 -- NB: heap constructor tag should be compatible with the nullary constructor tag
 caseOfToCode :: StatInfo -> Atom -> List BranchF -> CodeGenM Name
@@ -2547,7 +2536,7 @@ assembleClosureArgs' :: StatInfo -> List Idx -> List Atom -> CodeGenM Name
 assembleClosureArgs' nfo env args = let { envsize = length env ; nargs = length args ; ntotal = plus envsize nargs } in 
   ifte (eq ntotal 0) (sreturn "NULL") 
   ( withFreshVar "loc" (\loc -> sseq (ssequence_
-    [ addWords [ "stack_ptr " , loc , " =  rts_stack_allocate(" , showInt ntotal , ");" ]
+    [ addWords [ "stack_ptr " , loc , " = rts_stack_allocate(" , showInt ntotal , ");" ]
     , copyEnvironmentTo  nfo loc loc 0       env
     , copyEnvironmentTo' nfo loc loc envsize args 
     ]) (sreturn loc) ))
@@ -2565,7 +2554,7 @@ genericApplicationTo nfo funvar args = let { nargs = length args } in
 
 callStatic :: Static -> CodeGenM Name
 callStatic sidx = withFreshVar "result" (\var -> sseq
-  (addWords [ "heap_ptr " , var , " = " , staticLabel sidx , "();   // 0,NULL);" ])
+  (addWords [ "heap_ptr " , var , " = " , staticLabel sidx , "(); " ])
   (sreturn var))
 
 callClosureBody :: StatInfo -> ClosureF -> CodeGenM Name
@@ -2596,7 +2585,7 @@ applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ 
         [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
         , copyEnvironmentTo' nfo "SP" obj 1 args
         ]) (sreturn obj)) }
-    ; _ -> sbind (evalToVar nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
-  ; _ -> sbind (evalToVar nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
+    ; _ -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
+  ; _ -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
 
 --------------------------------------------------------------------------------
