@@ -584,6 +584,13 @@ trieInsert string y = go string where
     { Nil -> Node (Just y) table
     ; Cons x xs -> Node mb (mapInsert (ord x) (trieSingleton xs y) (go xs) table) } } }
 
+-- | throws an exception if the key already exists
+trieInsertNew :: String -> String -> a -> Trie a -> Trie a
+trieInsertNew errmsg string y = go string where
+  { go str trie = case trie of { Node mb table -> case str of
+    { Nil -> case mb of { Nothing -> Node (Just y) table ; _ -> error errmsg }
+    ; Cons x xs -> Node mb (mapInsert (ord x) (trieSingleton xs y) (go xs) table) } } }
+
 trieDelete :: String -> Trie a -> Trie a
 trieDelete str trie = case trie of { Node mb table -> case str of
   { Nil -> Node Nothing table
@@ -591,6 +598,10 @@ trieDelete str trie = case trie of { Node mb table -> case str of
 
 trieFromList :: List (Pair String a) -> Trie a
 trieFromList = foldr f trieEmpty where { f kv trie = case kv of { Pair k v -> trieInsert k v trie } }
+
+-- | throws an exception if there is a duplicate key
+trieFromListUnique :: (String -> String) -> List (Pair String a) -> Trie a
+trieFromListUnique errmsg = foldr f trieEmpty where { f kv trie = case kv of { Pair k v -> trieInsertNew (errmsg k) k v trie } } 
 
 trieToList :: Trie a -> List (Pair String a)
 trieToList = go where { go trie = case trie of { Node mb table -> let
@@ -1614,10 +1625,11 @@ data CoreProgram
 
 programToCoreProgram :: Program Expr -> CoreProgram
 programToCoreProgram defins = CorePrg (map worker defins) main where
-  { topLevScope = trieFromList (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins))
+  { duplicate n = concat [ "multiple declaration of " , quoteString n ]
+  ; topLevScope = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins))
   ; dconTable   = collectDataCons defins
   ; worker def  = case def of { Defin name expr -> Defin name (exprToCore dconTable topLevScope expr) } 
-  ; no_main_err = \_ -> error (concat [ "entry point `" , nanoMainIs , "` not found" ]) 
+  ; no_main_err = \_ -> error (concat [ "entry point " , quoteString nanoMainIs , " not found" ]) 
   ; main = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
       { TopL k -> AtmT (VarA (Named nanoMainIs (TopV k))) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
 
