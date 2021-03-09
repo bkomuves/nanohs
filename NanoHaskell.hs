@@ -58,7 +58,7 @@ nanoMainIs :: Name
 nanoMainIs = "nanoMain"
 
 --------------------------------------------------------------------------------
--- * entry point 
+-- * Compiler entry point 
 
 -- | GHC entry point
 main = case runIO nanoMain of { Unit -> _GhcReturnUnit }
@@ -73,24 +73,37 @@ printUsage = putStrLn "usage: nanohs <input.hs> <output.c>"
 
 runCompiler :: FilePath -> FilePath -> IO Unit
 runCompiler inputFn outputFn =
-  iobind (loadAndParse1 inputFn) (\toplevs -> let 
-    { defins   = catMaybes (map mbDefin toplevs)
-    ; dconTrie = collectDataCons defins
-    ; coreprg  = programToCoreProgram defins
-    ; lprogram = coreProgramToLifted coreprg
-    ; code     = runCodeGenM_ (liftedProgramToCode dconTrie lprogram)
-    } in writeFile outputFn (unlines code))
+  iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> 
+    ioseq (iomapM_ putStrLn files)
+      (let 
+      { defins   = catMaybes (map mbDefin toplevs)
+      ; dconTrie = collectDataCons defins
+      ; coreprg  = programToCoreProgram defins
+      ; lprogram = coreProgramToLifted coreprg
+      ; code     = runCodeGenM_ (liftedProgramToCode dconTrie lprogram)
+      } in writeFile outputFn (unlines code)) })
 
-loadAndParseMany :: List FilePath -> IO (List TopLevel)
-loadAndParseMany fnames = iobind (iomapM loadAndParse1 fnames) (\xxs -> ioreturn (concat xxs))
+type Files  = List FilePath
+type Loaded = Pair Files (List TopLevel)
 
-loadAndParse1 :: FilePath -> IO (List TopLevel)
-loadAndParse1 fname =
-  iobind (readFile fname) (\text -> let 
-    { blocks   = lexer text
-    ; toplevs  = map parseTopLevelBlock blocks
-    ; includes = filterIncludes toplevs
-    } in iobind (loadAndParseMany includes) (\toplevs2 -> ioreturn (append toplevs toplevs2)))
+loadAndParseMany :: Files -> List FilePath -> IO Loaded
+loadAndParseMany sofar fnames = case fnames of { Nil -> ioreturn (Pair sofar Nil) ; Cons this rest ->
+  iobind (loadAndParse1    sofar  this) (\loaded -> case loaded of { Pair sofar'  toplevs1 ->
+  iobind (loadAndParseMany sofar' rest) (\loaded -> case loaded of { Pair sofar'' toplevs2 ->
+  ioreturn (Pair sofar'' (append toplevs1 toplevs2)) }) }) }
+
+--  iobind (iomapM loadAndParse1 fnames) (\xxs -> ioreturn (concat xxs))
+
+loadAndParse1 :: Files -> FilePath -> IO Loaded
+loadAndParse1 sofar fname = case stringMember fname sofar of
+  { True  -> ioreturn (Pair sofar Nil)
+  ; False -> iobind (readFile fname) (\text -> let 
+      { blocks   = lexer text
+      ; toplevs  = map parseTopLevelBlock blocks
+      ; includes = filterIncludes toplevs
+      ; sofar'   = Cons fname sofar
+      } in iobind (loadAndParseMany sofar' includes) (\loaded -> case loaded of { Pair sofar'' toplevs2 -> 
+           ioreturn (Pair sofar'' (append toplevs toplevs2)) })) }
 
 --------------------------------------------------------------------------------
 -- * Prelude
@@ -162,9 +175,9 @@ range = rangeFrom 0
 rangeFrom :: Int -> Int -> List Int
 rangeFrom k n = ifte (gt n 0) (Cons k (rangeFrom (inc k) (dec n))) Nil
 
--- | the list [-n+1,-n+2,...0] == reverse (map negate (range n))
-negativeDeBruijnRange :: Int -> List Int
-negativeDeBruijnRange n = rangeFrom (inc (negate n)) n
+-- -- | the list [-n+1,-n+2,...0] == reverse (map negate (range n))
+-- negativeDeBruijnRange :: Int -> List Int
+-- negativeDeBruijnRange n = rangeFrom (inc (negate n)) n
 
 --------------------------------------------------------------------------------
 -- ** Bool
@@ -383,38 +396,6 @@ zipFirstRest :: b -> b -> List a -> List (Pair b a)
 zipFirstRest first rest xs = case xs of { Nil -> Nil ; Cons x xs -> Cons (Pair first x) (zipConst rest xs) }
 
 --------------------------------------------------------------------------------
--- ** Sets
-
--- | We model sets as sorted lists. We would need an Ord instance so we only
--- do it for Int-s.
-type IntSet = List Int
-
-setEmpty :: IntSet
-setEmpty = Nil
-
-setMember :: Int -> IntSet -> Bool
-setMember = elem
-
-setSingleton :: Int -> IntSet
-setSingleton x = Cons x Nil
-
-setInsert :: Int -> IntSet -> IntSet
-setInsert k = go where
-  { go set = case set of { Nil -> Cons k Nil ; Cons x xs -> case compare k x of
-    { LT -> Cons k set ; EQ -> set ; GT -> Cons x (go xs) } } }
-
-setDelete :: Int -> IntSet -> IntSet
-setDelete k = go where
-  { go set = case set of { Nil -> Nil ; Cons x xs -> case compare k x of
-    { LT -> set ; EQ -> xs ; GT -> Cons x (go xs) } } }
-
-setUnion :: IntSet -> IntSet -> IntSet
-setUnion set1 set2 = flipFoldr setInsert set1 set2
-
-setUnions :: List IntSet -> IntSet
-setUnions = foldl setUnion setEmpty
-
---------------------------------------------------------------------------------
 -- ** Characters
 
 singleQuoteC    = chr 39
@@ -437,13 +418,21 @@ isLower ch = and (ge k 97) (le k 122) where { k = ord ch }
 
 isAlpha    ch = or (isUpper ch) (isLower ch)
 isAlphaNum ch = or (isAlpha ch) (isDigit ch)
-
-isLower_ ch = or (ceq ch '_') (isLower ch)
+isLower_   ch = or (ceq ch '_') (isLower ch)
 
 --------------------------------------------------------------------------------
 -- ** Strings
 
 -- type String = List Char
+
+stringEq :: String -> String -> Bool
+stringEq = go where { go str1 str2 = case str1 of 
+  { Nil       -> case str2 of { Nil -> True  ; _ -> False }
+  ; Cons x xs -> case str2 of { Nil -> False ; Cons y ys -> and (ceq x y) (go xs ys) }}}
+
+stringMember :: String -> List String -> Bool
+stringMember what ls = case ls of { Nil -> False ; Cons this rest -> case stringEq what this of
+  { True -> True ; False -> stringMember what rest }} 
 
 charToString :: Char -> String
 charToString x = Cons x Nil
@@ -514,6 +503,38 @@ unlines = intercalate (Cons newlineC Nil)
 lines :: String -> List String
 lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newlineC) xs of
   { Pair this rest -> case rest of { Nil -> Cons this Nil ; Cons _ ys -> Cons this (lines ys) } } }
+
+--------------------------------------------------------------------------------
+-- ** Sets
+
+-- | We model sets as sorted lists. We would need an Ord instance so we only
+-- do it for Int-s.
+type IntSet = List Int
+
+setEmpty :: IntSet
+setEmpty = Nil
+
+setMember :: Int -> IntSet -> Bool
+setMember = elem
+
+setSingleton :: Int -> IntSet
+setSingleton x = Cons x Nil
+
+setInsert :: Int -> IntSet -> IntSet
+setInsert k = go where
+  { go set = case set of { Nil -> Cons k Nil ; Cons x xs -> case compare k x of
+    { LT -> Cons k set ; EQ -> set ; GT -> Cons x (go xs) } } }
+
+setDelete :: Int -> IntSet -> IntSet
+setDelete k = go where
+  { go set = case set of { Nil -> Nil ; Cons x xs -> case compare k x of
+    { LT -> set ; EQ -> xs ; GT -> Cons x (go xs) } } }
+
+setUnion :: IntSet -> IntSet -> IntSet
+setUnion set1 set2 = flipFoldr setInsert set1 set2
+
+setUnions :: List IntSet -> IntSet
+setUnions = foldl setUnion setEmpty
 
 --------------------------------------------------------------------------------
 -- ** Association maps (sorted lists of (key,value) pairs)
@@ -628,6 +649,9 @@ ioret_ = \_ -> Unit
 -- (because we are cheating with ML-style IO)
 iobind :: IO a -> (a -> IO b) -> IO b
 iobind action u _ = u (action Unit) Unit
+
+ioerror :: String -> IO a
+ioerror msg = \_ -> error msg
 
 ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
 ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
@@ -1080,6 +1104,14 @@ commentL = choice [ comment1 , comment2 ] where
   ; comment2 = pseq (tokens "{-#") (ppost (many (noneOf [newlineC,carriageReturnC])) eol)
   }
 
+-- | We need to hide some stuff (for example @include@-s) from GHC
+nanoPragmaL :: Lexer Block
+nanoPragmaL = 
+  pbind (tokens "{-%")                                         (\_  -> 
+  pbind (many1 (locatedL lexemeL))                             (\ln -> 
+  pbind (tokens "%-}")                                         (\_  ->
+  pbind (ppost (many (noneOf [newlineC,carriageReturnC])) eol) (\_  -> preturn ln))))
+
 -- | Note: this accepts "eof"!
 emptyLineL :: Lexer Unit
 emptyLineL = pseq spaces0 eol
@@ -1098,6 +1130,7 @@ blockOrCommentL :: Lexer (Maybe Block)
 blockOrCommentL = choice
   [ preplace Nothing commentL
   , preplace Nothing emptyLineL
+  , pfmap    Just    nanoPragmaL
   , pfmap    Just    blockL
   ]
 
@@ -2005,6 +2038,12 @@ data BranchF
   | DefaultF ClosureF
   deriving Show
 
+isDefaultF :: BranchF -> Bool
+isDefaultF branch = case branch of { DefaultF _ -> True ; _ -> False }
+
+hasDefaultF :: List BranchF -> Bool
+hasDefaultF ls = case ls of { Nil -> False ; Cons x xs -> case isDefaultF x of { True -> True ; _ -> hasDefaultF xs }}
+
 -- | When allocating a closure, we create a new local environment
 -- by pruning the current environment. We also remember the number
 -- of lambda arguments (0 = thunk)
@@ -2099,6 +2138,10 @@ data LambdaT
 -- The name is just a name for the resulting top-level definition
 -- (so debugging is easier), and the level is the level where the lambda
 -- starts (the \"boundary\" level)
+--
+-- TODO: this has really bad complexity because it always traverses subterms
+-- at each recursive calls; we should instead define subsitutions and compose
+-- them...
 lambdaToClosure :: Int -> Name -> Level -> LambdaT -> ClosM ClosureF
 lambdaToClosure nstatic name boundary lambda = case lambda of { LambdaT nargs body ->
   let { newlevel = plus boundary nargs
@@ -2505,8 +2548,10 @@ caseOfToCode nfo atom branches =
     , addWords [ "if IS_HEAP_PTR(" , scrutinee, ") " , tagword , " = " , scrutinee , "[0]; else " , tagword , " = (intptr_t)" , scrutinee , " ;" ]
     , addWords [ "switch(" , tagword , ") {" ]
     , smapM_ (worker result scrutinee) branches
+    , swhen (not (hasDefaultF branches)) 
+        (addWords [ "default: rts_internal_error(" , doubleQuoteString "non-exhaustive patterns in case" , ");" ])
+    , addLine  "}"
     , addWords [ "SP = " , oldsp , " ;   // branches allocate ?! " ]
-    , addLine    "}"
     ]) (\_ -> sreturn result )))))
   where 
     { worker result scrutinee branch = case branch of
@@ -2530,16 +2575,6 @@ caseOfToCode nfo atom branches =
                   { InlineBody lifted -> sbind (liftedToCode nfo lifted) (\res -> addSetValue result res)
                   ; StaticBody static -> sbind (callStatic static      ) (\res -> addSetValue result res) }
               , addLine "break; }" ] } ) }}}
-
---         ; BranchF namedcon arity closure -> case namedcon of { Named cname con -> sbind (freshVar "args") (\args -> ssequence_
---             [ addWords [ "case HTAG_DATACON(" , showInt con , "," , showInt arity , "): {    // " , cname , "/" , showInt arity ]
---             , swhen (gt arity 0) (ssequence_
---                 [ addWords [ "stack_ptr " , args , " = rts_stack_allocate(" , showInt arity , ");" ]
---                 , sforM_ (range arity) (\j -> addWords [ args , "[" , showInt j , "] = " , scrutinee , "[" , showInt (inc j) , "];" ])
---                 ])
---             , let { clargs = map IdxV (reverse (range arity)) } 
---               in  sbind (applyClosure nfo closure clargs) (\res -> addSetValue result res) 
---             , addLine "break; }" ] ) }}}
 
 --------------------------------------------------------------------------------
 -- ** application
