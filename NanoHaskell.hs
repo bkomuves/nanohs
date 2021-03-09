@@ -53,16 +53,44 @@ import PrimGHC
 -- targetOS :: Target
 -- targetOS = MacOS
 
+-- | Name of the entry point
+nanoMainIs :: Name
+nanoMainIs = "nanoMain"
+
 --------------------------------------------------------------------------------
--- * entry point (required below)
+-- * entry point 
 
--- main :: Unit
--- main = error "nanoMain"
-main = (showInt (sum (range 11)))
+-- | GHC entry point
+main = case runIO nanoMain of { Unit -> _GhcReturnUnit }
 
--- main = Pair
---   (sum (rangeFrom 1 10))
---   (showInt (sum (range 101)))
+-- | Nano entry point
+nanoMain :: IO Unit
+nanoMain = iobind getArgs (\args -> case args of { Nil -> printUsage ; Cons input rest -> 
+  case rest of { Nil -> printUsage ; Cons output _ -> runCompiler input output }})
+
+printUsage :: IO Unit
+printUsage = putStrLn "usage: nanohs <input.hs> <output.c>"
+
+runCompiler :: FilePath -> FilePath -> IO Unit
+runCompiler inputFn outputFn =
+  iobind (loadAndParse1 inputFn) (\toplevs -> let 
+    { defins   = catMaybes (map mbDefin toplevs)
+    ; dconTrie = collectDataCons defins
+    ; coreprg  = programToCoreProgram defins
+    ; lprogram = coreProgramToLifted coreprg
+    ; code     = runCodeGenM_ (liftedProgramToCode dconTrie lprogram)
+    } in writeFile outputFn (unlines code))
+
+loadAndParseMany :: List FilePath -> IO (List TopLevel)
+loadAndParseMany fnames = iobind (iomapM loadAndParse1 fnames) (\xxs -> ioreturn (concat xxs))
+
+loadAndParse1 :: FilePath -> IO (List TopLevel)
+loadAndParse1 fname =
+  iobind (readFile fname) (\text -> let 
+    { blocks   = lexer text
+    ; toplevs  = map parseTopLevelBlock blocks
+    ; includes = filterIncludes toplevs
+    } in iobind (loadAndParseMany includes) (\toplevs2 -> ioreturn (append toplevs toplevs2)))
 
 --------------------------------------------------------------------------------
 -- * Prelude
@@ -322,7 +350,7 @@ takeWhile cond = go where
 dropWhile :: (a -> Bool) -> List a -> List a
 dropWhile cond = go where
   { go ls = case ls of { Nil -> Nil ; Cons x xs -> case cond x of
-    { True -> go xs ; False -> xs } } }
+    { True -> go xs ; False -> ls } } }
 
 span :: (a -> Bool) -> List a -> Pair (List a) (List a)
 span cond xs = Pair (takeWhile cond xs) (dropWhile cond xs)
@@ -1101,11 +1129,12 @@ data TopLevel
   | TopModule   (List Token)
   deriving Show
 
+filterIncludes :: List TopLevel -> List FilePath
+filterIncludes = go where { go ls = case ls of { Nil -> Nil ; Cons this rest ->
+  case this of { TopInclude fn -> Cons fn (go rest) ; _ -> go rest }}}
+
 mbDefin :: TopLevel -> Maybe DefinE
 mbDefin toplev = case toplev of { TopDefin def -> Just def ; _ -> Nothing }
-
--- programToExpr :: Program -> Expr
--- programToExpr defs = PrgE defs (VarE "main")
 
 data Expr
   = VarE  Name
@@ -1588,9 +1617,9 @@ programToCoreProgram defins = CorePrg (map worker defins) main where
   { topLevScope = trieFromList (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins))
   ; dconTable   = collectDataCons defins
   ; worker def  = case def of { Defin name expr -> Defin name (exprToCore dconTable topLevScope expr) } 
-  ; no_main_err = \_ -> error "entry point `main` not found" 
-  ; main = case trieLookup "main" topLevScope of { Just varl -> case varl of
-      { TopL k -> AtmT (VarA (Named "main" (TopV k))) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
+  ; no_main_err = \_ -> error (concat [ "entry point `" , nanoMainIs , "` not found" ]) 
+  ; main = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
+      { TopL k -> AtmT (VarA (Named nanoMainIs (TopV k))) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
 
 --------------------------------------------------------------------------------
 -- ** Data constructors
@@ -2111,27 +2140,13 @@ coreProgramToLifted :: CoreProgram -> LiftedProgram
 coreProgramToLifted coreprg = case coreprg of { CorePrg defins mainTerm -> let
   { nstatic = length defins  
   ; action1 = sforM defins (\defin -> case defin of { Defin name term -> sfmap closureIndex (termToStaticClosure nstatic name 0 term) })
-  ; action2 = closureConvert nstatic "main" 0 0 mainTerm  
+  ; action2 = closureConvert nstatic nanoMainIs 0 0 mainTerm  
   ; action  = sliftA2 Pair action1 action2
   } in case runState action Nil of { Pair toplist pair2 -> 
          case pair2 of { Pair idxlist main -> LProgram (reverse toplist) idxlist main } } }
 
--- coreToLifted :: Term -> LiftedProgram
--- coreToLifted term = case runState (handleTopLetRec term) Nil of { Pair toplist pair2 -> 
---   case pair2 of { Pair idxlist main -> LProgram (reverse toplist) idxlist main }}
--- 
--- -- | The top-level letrec is handled specially (we want static functions)
--- handleTopLetRec :: List (Defin Term) -> ClosM (Pair (List Static) Lifted)
--- handleTopLetRec defins = let { nstatic = length defins ; main = Top} in 
--- term = case term of { PrgT nstatic toplevs main -> sliftA2 Pair
---   (sforM toplevs (\named -> case named of { Named name term -> sfmap closureIndex (termToStaticClosure nstatic name 0 term) }))
---   (closureConvert nstatic "main" 0 0 main) }
-
 addPrefix :: Name -> Name -> Name
 addPrefix prefix name = append3 prefix "/" name
-
--- closureConvert :: Int -> Name -> Level -> ClosEnv -> Level -> Term -> ClosM Lifted
--- closureConvert nstatic nameprefix boundary closEnv = go where
 
 closureConvert :: Int -> Name -> Level -> Level -> Term -> ClosM Lifted
 closureConvert nstatic nameprefix boundary = go where
@@ -2276,10 +2291,11 @@ liftedProgramToCode dcontable pair = case pair of { LProgram toplevs topidxs mai
                , "StaticFunArities  = static_arity_table;" 
                , "ConstructorNames  = datacon_table;" ]
     , addWords [ "NStatic           = ", showInt ntoplevs , " ;   // number of static functions " ]
-    , addLines [ "rts_initialize(argc,argv);" , "// main " ]
-    , sbind (liftedToCode nfo main) (\result -> sseq
+    , addLines [ "rts_initialize(argc,argv);" , "" , "// main" ]
+    , sbind (liftedToCode nfo main) (\code -> withFreshVar "fresult" (\fresult -> sseq3
+        (addWords [ "heap_ptr ", fresult , " = " , code , " ; " ])
         (addWords [ "// printf(" , doubleQuoteStringLn "done." , ");" ])
-        (addWords [ "rts_generic_println(" , result , ");" ]))
+        (addWords [ "rts_generic_println(" , fresult , ");" ])))
     , addLines [ "exit(0);" , "}" ]
     ] }
   

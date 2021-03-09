@@ -85,7 +85,9 @@ char **ArgVector;
 // -----------------------------------------------------------------------------
 
 heap_ptr rts_internal_error(const char *msg) {
+  fputs("RTS: ",stderr);
   fputs(msg,stderr);
+  fputc(10 ,stderr);
   exit(999);
   return UNIT;
 }
@@ -522,6 +524,11 @@ heap_ptr prim_OpenFile(heap_ptr fnarg, heap_ptr modearg) {
   char fname[256];
   rts_marshal_to_cstring(256,fname,fnarg);
   FILE *handle = fopen(fname,mode);
+  if (!handle) {
+    char msg[512]; 
+    sprintf(msg,"cannot open file `%s`",fname);
+    rts_internal_error(msg);
+  }
   return (FROM_FILE(handle));
 }
 
@@ -571,17 +578,17 @@ void rts_initialize(int argc, char **argv) {
     static_stack[i] = (uint64_t)obj;   
   }
 
-  // evaluate thunks (this includes functions which looks like CAFs!!!)
-  for(int i=0;i<NStatic;i++) {
-    // printf("%d\n",i);
-    int   arity  = StaticFunArities [i];
-    if (arity == 0) { 
-      // thunk; we have to evaluate it
-//      printf("evaluating static thunk %d\n",i);
-      heap_ptr obj = rts_static_call(i); // funptr);
-      static_stack[i] = (uint64_t)obj;   
-    }
-  } 
+//   // evaluate thunks (this includes functions which looks like CAFs!!!)
+//   for(int i=0;i<NStatic;i++) {
+//     // printf("%d\n",i);
+//     int   arity  = StaticFunArities [i];
+//     if (arity == 0) { 
+//       // thunk; we have to evaluate it
+// //      printf("evaluating static thunk %d\n",i);
+//       heap_ptr obj = rts_static_call(i); // funptr);
+//       static_stack[i] = (uint64_t)obj;   
+//     }
+//   } 
 
   // printf("initialized.\n");
 }

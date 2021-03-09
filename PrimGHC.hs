@@ -188,6 +188,12 @@ hPutChar# h c = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutChar h c) (Prelude
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types
 
+_GhcUnit :: ()
+_GhcUnit = ()
+
+_GhcReturnUnit :: Prelude.IO ()
+_GhcReturnUnit = Prelude.return ()
+
 _fromGhcBool :: Prelude.Bool -> Bool
 _fromGhcBool b = case b of { Prelude.True -> True ; Prelude.False -> False }
 

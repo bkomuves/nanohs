@@ -1,6 +1,6 @@
 
 
-main = runIO (putStrLn text2)
+nanoMain = runIO (putStrLn text2)
 
 -- action7 = iobind (readFile "a.txt" ReadMode) (\text -> putStrLn text)
 -- action7 = iobind (withFile "a.txt" ReadMode hGetContents) (\text -> putStrLn (unlines (map ff (lines text))))
