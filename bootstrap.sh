@@ -9,16 +9,16 @@ rm nanohs_stage2.exe   2>/dev/null
 
 echo "" ; echo "==================="
 echo "compiling a bootstrap (stage #0) compiler via GHC"
-ghc -O0 --make -main-is NanoHaskell.main NanoHaskell.hs -o nanohs_via_ghc.exe
+ghc -O0 --make -main-is Nano.main Nano.hs -o nanohs_via_ghc.exe
 
 echo "" ; echo "==================="
 echo "compiling a stage #1 compiler via the bootstrapped one (stage #0)"
-./nanohs_via_ghc.exe NanoHaskell.hs nanohs_stage1.c 
+./nanohs_via_ghc.exe Nano.hs nanohs_stage1.c 
 gcc -O -std=c99 nanohs_stage1.c -o nanohs_stage1.exe
 
 echo "" ; echo "==================="
 echo "compiling a stage #2 compiler via stage #1"
-./nanohs_stage1.exe NanoHaskell.hs nanohs_stage2.c 
+./nanohs_stage1.exe Nano.hs nanohs_stage2.c 
 
 echo "" ; echo "==================="
 echo "comparing the stage #1 and stage #2 outputs:"

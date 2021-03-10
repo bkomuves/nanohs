@@ -1,4 +1,11 @@
 bck/
+*.o
+*.hi
 a.out
 tmp.c
+tmp2.c
 tmp.asm
+*.exe
+nanohs_stage1.c
+nanohs_stage2.c
+a.txt
