@@ -90,10 +90,11 @@ showLiteral lit = case lit of
 --------------------------------------------------------------------------------
 -- ** Variables
 
--- | Variables can be a de Bruijn index, or a top-level definition
+-- | Variables can be a de Bruijn index, or a top-level definition, or a static string index
 data Var
   = IdxV Idx
   | TopV Static
+  | StrV Int
   deriving Show
 
 -- | Shift de Bruijn indices in variables
@@ -102,8 +103,9 @@ shiftVar ofs var = case var of { IdxV i -> IdxV (plus i ofs) ; _ -> var }
 
 prettyVar :: Var -> String
 prettyVar var = case var of 
-  { IdxV i -> concat [  "de Bruijn (" , showInt i , ")" ] 
-  ; TopV j -> concat [ "static fun (" , showInt j , ")" ] }
+  { IdxV i -> concat [  "de_Bruijn(" , showInt i , ")" ] 
+  ; TopV j -> concat [ "static_fun(" , showInt j , ")" ] 
+  ; StrV k -> concat [ "static_str(" , showInt k , ")" ]}
 
 --------------------------------------------------------------------------------
 -- ** Atoms
@@ -152,11 +154,15 @@ showSrcPos :: SrcPos -> String
 showSrcPos pos = case pos of { SrcPos row col ->
   append ("line ") (append3 (showNat row) (", column ") (showNat col)) }
 
-data Location  = Loc SrcPos SrcPos    deriving Show
-data Located a = Located Location a   deriving Show
+showSrcPos' :: FilePath -> SrcPos -> String
+showSrcPos' fname pos = append3 "file " (doubleQuoteString fname) (append ", " (showSrcPos pos))
 
-locStart loc = case loc of { Loc pos1 _ -> pos1 }
-locEnd   loc = case loc of { Loc _ pos2 -> pos2 }
+data Location  = Loc FilePath SrcPos SrcPos deriving Show
+data Located a = Located Location a         deriving Show
+
+locFn    loc = case loc of { Loc fn _ _    -> fn   }
+locStart loc = case loc of { Loc _  pos1 _ -> pos1 }
+locEnd   loc = case loc of { Loc _  _ pos2 -> pos2 }
 
 location lx = case lx of { Located loc _ -> loc }
 located  lx = case lx of { Located _   x -> x   }

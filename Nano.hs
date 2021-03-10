@@ -62,15 +62,14 @@ printUsage = putStrLn "usage: nanohs <input.hs> <output.c>"
 
 runCompiler :: FilePath -> FilePath -> IO Unit
 runCompiler inputFn outputFn =
-  iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> 
-    -- ioseq (iomapM_ putStrLn files)
-      (let 
-      { defins   = catMaybes (map mbDefin toplevs)
-      ; dconTrie = collectDataCons defins
-      ; coreprg  = programToCoreProgram defins
-      ; lprogram = coreProgramToLifted coreprg
-      ; code     = runCodeGenM_ (liftedProgramToCode dconTrie lprogram)
-      } in writeFile outputFn (unlines code)) })
+  iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> (let 
+      { defins0  = catMaybes (map mbDefin toplevs)
+      ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins -> let 
+        { dconTrie = collectDataCons defins
+        ; coreprg  = programToCoreProgram defins
+        ; lprogram = coreProgramToLifted coreprg
+        ; code     = runCodeGenM_ (liftedProgramToCode strlits dconTrie lprogram)
+        } in writeFile outputFn (unlines code) }) }) 
 
 type Files  = List FilePath
 type Loaded = Pair Files (List TopLevel)
@@ -87,8 +86,8 @@ loadAndParse1 :: Files -> FilePath -> IO Loaded
 loadAndParse1 sofar fname = case stringMember fname sofar of
   { True  -> ioreturn (Pair sofar Nil)
   ; False -> iobind (readFile fname) (\text -> ioseq (putStrLn (append "+ " fname)) (let 
-      { blocks   = lexer text
-      ; toplevs  = map parseTopLevelBlock blocks
+      { blocks   = lexer fname text
+      ; toplevs  = map (parseTopLevelBlock fname) blocks
       ; includes = filterIncludes toplevs
       ; sofar'   = Cons fname sofar
       } in iobind (loadAndParseMany sofar' includes) (\loaded -> case loaded of { Pair sofar'' toplevs2 -> 
@@ -148,6 +147,7 @@ scopeCheck dcontable = go 0 where
     { VarE  name -> case mbAtom level scope expr of
         { Just atom -> AtmT atom
         ; Nothing   -> error "fatal error: VarE should be always an atom!" }
+    ; StrE j     -> AtmT (VarA (Named (appendInt "str_" j) (StrV j)))
     ; AppE e1 e2 -> case mbAtom level scope e2 of
         { Just atom -> AppT (go level scope e1) atom
         ; Nothing   -> LetT (go level scope e2) (AppT (go (inc level) scope e1) (VarA (Named "letx" (IdxV 0)))) }
@@ -271,7 +271,7 @@ pruneEnvironment boundary = go where
     { VarA nvar -> goVar level (forgetName nvar)
     ; ConA _    -> setEmpty
     ; KstA _    -> setEmpty }
-  ; goVar  level var = case var of { TopV _ -> setEmpty;
+  ; goVar  level var = case var of { TopV _ -> setEmpty ; StrV _ -> setEmpty ;
       IdxV idx -> let { j = minus level (inc idx) } in ifte (lt j boundary) (setSingleton j) setEmpty }
   ; go level term = case term of
     { AtmT atom   -> goAtom level atom
@@ -340,7 +340,7 @@ lambdaToClosure nstatic name boundary lambda = case lambda of { LambdaT nargs bo
       ; replaceAtom level atom = case atom of 
           { VarA nvar -> case nvar of { Named name var -> case var of
             { IdxV idx -> VarA (Named name (replaceIdx level idx)) 
-            ; TopV top -> VarA (Named name (TopV top)) }}
+            ; _        -> atom }}
           ; _ -> atom }
       ; body' = transformAtom replaceAtom newlevel body
       }
@@ -391,13 +391,14 @@ addPrefix prefix name = append3 prefix "/" name
 closureConvert :: Int -> Name -> Level -> Level -> Term -> ClosM Lifted
 closureConvert nstatic nameprefix boundary = go where
   { prefixed name = addPrefix nameprefix name
-  ; goVar level idx = IdxV idx
-  ; goAtom level atom = case atom of 
-      { VarA named -> case named of { Named name var -> case var of
-        { IdxV idx   -> VarA (Named name (goVar level idx)) 
-        ; TopV top   -> VarA (Named name (TopV top)) }}
-      ; ConA named -> ConA named
-      ; KstA lit   -> KstA lit   }
+  -- ; goVar level idx = IdxV idx
+  -- ; goAtom level atom = case atom of 
+  --     { VarA named -> case named of { Named name var -> case var of
+  --       { IdxV idx   -> VarA (Named name (goVar level idx)) 
+  --       ; TopV top   -> VarA (Named name (TopV top)) }}
+  --     ; ConA named -> ConA named
+  --     ; KstA lit   -> KstA lit   }
+  ; goAtom level atom = atom
   ; go level term = case term of
     { AtmT named    -> sreturn (AtmF (goAtom level named))
     ; AppT t1 a2    -> sliftA2 AppF (go level t1) (sreturn (goAtom level a2))
@@ -506,12 +507,23 @@ makeDataConTable trie = let { list = mapFromList (map swap (trieToList trie)) } 
         addWords [ prefix , doubleQuoteString name , "   // " , showInt idx ] }})
   , addLines [ "  };" ] ]
 
-liftedProgramToCode :: DataConTable -> LiftedProgram -> CodeGenM_
-liftedProgramToCode dcontable pair = case pair of { LProgram toplevs topidxs main -> 
+type StringLitTable = List String
+
+makeStringLitTable :: StringLitTable -> CodeGenM_
+makeStringLitTable list = ssequence_
+  [ addLines [ "char *string_table[] = " ]
+  , sforM_ (zipFirstRest ("  { ") ("  , ") list) (\pair -> 
+      case pair of { Pair prefix str -> addWords [ prefix , doubleQuoteString str ] })
+  , addLines [ "  };" ] ]
+
+liftedProgramToCode :: StringLitTable -> DataConTable -> LiftedProgram -> CodeGenM_
+liftedProgramToCode strlits dcontable pair = case pair of { LProgram toplevs topidxs main -> 
   let { ntoplevs = length toplevs ; nfo = StatInfo topidxs } in ssequence_
     [ addLines [ "" , concat [ "#include " , doubleQuoteString "rts.c" ] ]
     , addLines [ "" , "// ----------------------------------------" , "" ]
     , makeDataConTable dcontable
+    , addLines [ "" , "// ----------------------------------------" , "" ]
+    , makeStringLitTable strlits
     , addLines [ "" , "// ----------------------------------------" , "" ]
     , smapM_ (toplevToCode nfo) toplevs
     , addLines [ "" , "// ----------------------------------------" , "" ]
@@ -520,7 +532,8 @@ liftedProgramToCode dcontable pair = case pair of { LProgram toplevs topidxs mai
     , addLines [ "int main(int argc, char **argv) {"
                , "StaticFunPointers = static_funptr_table;"
                , "StaticFunArities  = static_arity_table;" 
-               , "ConstructorNames  = datacon_table;" ]
+               , "ConstructorNames  = datacon_table;" 
+               , "StaticStringTable = string_table;" ]
     , addWords [ "NStatic           = ", showInt ntoplevs , " ;   // number of static functions " ]
     , addLines [ "rts_initialize(argc,argv);" , "" , "// main" ]
     , sbind (liftedToCode nfo main) (\code -> withFreshVar "fresult" (\fresult -> sseq3
@@ -606,15 +619,15 @@ evalToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo ter
 loadVar' ::  StatInfo -> Var -> CodeLine
 loadVar' nfo var = case var of
   { IdxV i -> concat [ "DE_BRUIJN(" , showInt i , ")" ]
-  ; TopV j -> case nfo of { StatInfo idxlist ->
-                concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }}
+  ; TopV j -> case nfo of { StatInfo idxlist -> concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }
+  ; StrV j -> concat [ "rts_marshal_from_cstring( StaticStringTable[" , showInt j , "] )" ] }
 
 -- forces thunks
 loadVar ::  StatInfo -> Var -> CodeLine
 loadVar nfo var = case var of
   { IdxV i -> concat [ "rts_force_thunk_at( SP - " , showInt (inc i) , ")" ]
-  ; TopV j -> case nfo of { StatInfo idxlist ->
-                concat [ "rts_force_thunk_at( static_stack + " , showInt (index j idxlist) , ")" ] }}
+  ; TopV j -> case nfo of { StatInfo idxlist -> concat [ "rts_force_thunk_at( static_stack + " , showInt (index j idxlist) , ")" ] }
+  ; StrV j -> concat [ "rts_marshal_from_cstring( StaticStringTable[" , showInt j , "] )" ] }
 
 loadAtom :: StatInfo -> Atom -> CodeLine
 loadAtom nfo atom = case atom of

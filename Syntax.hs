@@ -60,11 +60,11 @@ data Expr
   | AppE  Expr Expr
   | LamE  Name Expr
   | LetE  (List DefinE) Expr
-  | PrgE  (List DefinE) Expr
   | CaseE Expr (List BranchE)
   | LitE  Literal
   | ListE (List Expr)
   | PrimE PrimOp (List Expr)
+  | StrE  Int
   deriving Show
 
 data BranchE
@@ -119,6 +119,7 @@ recogAppsE :: Expr -> List Expr
 recogAppsE = compose reverse go where
   { go expr = case expr of { AppE f x -> Cons x (go f)  ; _ -> singleton expr } }
 
+-- | temporary argument names for saturating primops. Note that all primops have at most 3 arguments
 tmpVars :: List Name
 tmpVars = ["x1","x2","x3","x4","x5"]
 -- tmpVars = map (\i -> append "x" (showInt i)) (rangeFrom 1 5)
@@ -152,7 +153,6 @@ recogPrimApps1 = go where
           ; _            -> appsE (go    f) (map go args) } }
       ; LamE arg  body -> LamE  arg  (go body)
       ; LetE defs body -> LetE  (map goDefin defs) (go body)
-      ; PrgE defs body -> PrgE  (map goDefin defs) (go body)
       ; CaseE what brs -> CaseE (go what) (map goBranch brs)
       ; ListE exprs    -> ListE (map go exprs)
       ; _              -> expr }
@@ -161,5 +161,36 @@ recogPrimApps1 = go where
       ; DefaultE         rhs -> DefaultE         (go rhs) }
   ; goDefin defin = case defin of
       { Defin name expr -> Defin name (go expr) } }
+
+--------------------------------------------------------------------------------
+-- * extract string constants
+
+type StrState  = Pair Int (List String)
+type Stringy a = State StrState a
+
+addString :: String -> Stringy Int
+addString what = sbind sget (\pair -> case pair of { Pair n list -> 
+                 sbind (sput (Pair (inc n) (Cons what list))) (\_ -> sreturn n) })
+
+extractStringConstants :: Program Expr -> Pair (List String) (Program Expr)
+extractStringConstants program = case runState (smapM worker program) (Pair 0 Nil) of
+  { Pair fstate prg' -> Pair (reverse (snd fstate)) prg' } 
+  where { worker defin = case defin of { Defin name rhs -> sfmap (Defin name) (extractStringConstants1 rhs) } }
+
+extractStringConstants1 :: Expr -> Stringy Expr 
+extractStringConstants1 expr = go expr where
+  { go expr = case expr of
+    { LitE  lit      -> case lit of { StrL str  -> sfmap StrE (addString str) ; _ -> sreturn expr }
+    ; VarE  _        -> sreturn expr
+    ; AppE  e1 e2    -> sliftA2 AppE (go e1) (go e2)
+    ; LamE  n body   -> sfmap  (LamE n) (go body)
+    ; LetE  defs rhs -> sliftA2 LetE  (smapM goDefin defs) (go rhs)
+    ; CaseE what brs -> sliftA2 CaseE (go what) (smapM goBranch brs)
+    ; ListE ls       -> sfmap   ListE (smapM go ls)
+    ; PrimE pri args -> sfmap  (PrimE pri) (smapM go args) }
+  ; goDefin  defin  = case defin of { Defin name rhs -> sfmap (Defin name) (go rhs) }
+  ; goBranch branch = case branch of 
+    { BranchE con args rhs -> sfmap (BranchE con args) (go rhs)
+    ; DefaultE         rhs -> sfmap (DefaultE        ) (go rhs) } }
 
 --------------------------------------------------------------------------------

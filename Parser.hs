@@ -47,16 +47,17 @@ isNotWhite :: Token -> Bool
 isNotWhite tok = case tok of { WhiteTok -> False ; _ -> True }
 
 locatedL :: Parser tok a -> Parser tok (Located a)
-locatedL parser = pbind getSrcPos (\pos1 ->
-                  pbind parser    (\what ->
-                  pbind getSrcPos (\pos2 -> preturn (Located (Loc pos1 pos2) what))))
+locatedL parser = pbind getFn     (\fname ->
+                  pbind getSrcPos (\pos1  ->
+                  pbind parser    (\what  ->
+                  pbind getSrcPos (\pos2  -> preturn (Located (Loc fname pos1 pos2) what)))))
 
 type LList a = List (Located a)
 type LString = LList Char
 
-addLocations :: String -> LString
-addLocations = go startSrcPos where { go pos str = case str of { Nil -> Nil
-  ; Cons x xs -> let { pos' = nextSrcPos x pos } in Cons (Located (Loc pos pos') x) (go pos' xs) } }
+addLocations :: FilePath -> String -> LString
+addLocations fname = go startSrcPos where { go pos str = case str of { Nil -> Nil
+  ; Cons x xs -> let { pos' = nextSrcPos x pos } in Cons (Located (Loc fname pos pos') x) (go pos' xs) } }
 
 --------------------------------------------------------------------------------
 -- ** Parser combinators
@@ -66,30 +67,30 @@ data ParseResult tok a
   | ParseErr  SrcPos
   deriving Show
 
-type Parser tok a = SrcPos -> LList tok -> ParseResult tok a
+type Parser tok a = FilePath -> SrcPos -> LList tok -> ParseResult tok a
 
-runParser' :: Parser tok a -> LList tok -> ParseResult tok a
-runParser' parser input = case input of { Nil -> error "empty input"
-  ; Cons locx _ -> parser (locatedStart locx) input }
+runParser' :: FilePath -> Parser tok a -> LList tok -> ParseResult tok a
+runParser' fname parser input = case input of { Nil -> error "empty input"
+  ; Cons locx _ -> parser fname (locatedStart locx) input }
 
-runParser :: Parser tok a -> LList tok -> Either String a
-runParser p input = case runParser' p input of
+runParser :: FilePath -> Parser tok a -> LList tok -> Either String a
+runParser fname p input = case runParser' fname p input of
   { ParseOk x pos rest -> case rest of
     { Nil -> Right x
-    ; Cons _ _ -> Left (append "unexpected extra token at " (showSrcPos pos)) }
-  ; ParseErr pos -> Left (append "parse error at " (showSrcPos pos)) }
+    ; Cons _ _ ->   Left (append "unexpected extra token at " (showSrcPos' fname pos)) }
+  ; ParseErr pos -> Left (append "parse error at "            (showSrcPos' fname pos)) }
 
-runParser_ :: Parser tok a -> LList tok -> a
-runParser_ p input = case runParser p input of { Right y -> y ; Left msg -> error msg }
+runParser_ :: FilePath -> Parser tok a -> LList tok -> a
+runParser_ fname p input = case runParser fname p input of { Right y -> y ; Left msg -> error msg }
 
 preturn :: a -> Parser tok a
-preturn x pos str = ParseOk x pos str
+preturn x fn pos str = ParseOk x pos str
 
 pfail :: Parser tok a
-pfail pos str = ParseErr pos
+pfail fn pos str = ParseErr pos
 
 pfmap :: (a -> b) -> Parser tok a -> Parser tok b
-pfmap f p = \pos str -> case p pos str of
+pfmap f p = \fn pos str -> case p fn pos str of
   { ParseOk x pos' str' -> ParseOk (f x) pos' str'
   ; ParseErr  pos'      -> ParseErr pos' }
 
@@ -97,8 +98,8 @@ preplace :: b -> Parser tok a -> Parser tok b
 preplace x = pfmap (const x)
 
 pbind :: Parser tok a -> (a -> Parser tok b) -> Parser tok b
-pbind p u = \pos str -> case p pos str of
-  { ParseOk x pos' str' -> u x pos' str'
+pbind p u = \fn pos str -> case p fn pos str of
+  { ParseOk x pos' str' -> u x fn pos' str'
   ; ParseErr  pos'      -> ParseErr pos' }
 
 pseq  :: Parser tok a -> Parser tok b -> Parser tok b
@@ -107,24 +108,27 @@ pseq  p q = pbind p (\_ -> q)
 ppost :: Parser tok a -> Parser tok b -> Parser tok a
 ppost p q = pbind p (\x -> pbind q (\_ -> preturn x))
 
+getFn :: Parser tok FilePath
+getFn = \fn pos str -> ParseOk fn pos str
+
 getSrcPos :: Parser tok SrcPos
-getSrcPos = \pos str -> ParseOk pos pos str
+getSrcPos = \fn pos str -> ParseOk pos pos str
 
 alternative :: Parser tok a -> Parser tok a -> Parser tok a
-alternative p q = \pos str -> case p pos str of
+alternative p q = \fn pos str -> case p fn pos str of
   { ParseOk x pos' str' -> ParseOk x pos' str'
-  ; ParseErr _          -> q pos str }
+  ; ParseErr _          -> q fn pos str }
 
 choice :: List (Parser tok a) -> Parser tok a
 choice list = case list of { Nil -> pfail ; Cons p ps -> alternative p (choice ps) }
 
 optional :: Parser tok a -> Parser tok (Maybe a)
-optional p = \pos str -> case p pos str of
+optional p = \fn pos str -> case p fn pos str of
   { ParseOk x pos' str' -> ParseOk (Just x) pos' str'
   ; ParseErr  _pos'     -> ParseOk Nothing  pos  str  }
 
 option :: a -> Parser tok a -> Parser tok a
-option x0 p = \pos str -> case p pos str of
+option x0 p = \fn pos str -> case p fn pos str of
   { ParseOk x pos' str'  -> ParseOk x  pos' str'
   ; ParseErr  _pos'      -> ParseOk x0 pos  str  }
 
@@ -149,14 +153,14 @@ sepEndBy1 sep end p = pbind p (\x -> alternative
   (pseq sep (pbind (sepEndBy sep end p) (\xs -> preturn (Cons x xs)))))
 
 accept :: (tok -> Maybe a) -> Parser tok a
-accept f pos toks = case toks of
+accept f fn pos toks = case toks of
   { Nil -> ParseErr pos
   ; Cons locx xs -> case locx of { Located loc x -> case f x of
     { Just y    -> ParseOk y (locEnd loc) xs
     ; Nothing   -> ParseErr pos } } }
 
 satisfy :: (tok -> Bool) -> Parser tok tok
-satisfy f pos toks = case toks of
+satisfy f fn pos toks = case toks of
   { Nil -> ParseErr pos
   ; Cons locx xs -> case locx of { Located loc x -> case f x of
     { True  -> ParseOk x (locEnd loc) xs
@@ -179,7 +183,7 @@ noneOf :: Eq tok => List tok -> Parser tok tok
 noneOf list = satisfy (\x -> not (elem x list))
 
 eof :: Parser tok Unit
-eof pos str = case str of { Nil -> ParseOk Unit pos str ; Cons _ _ -> ParseErr pos }
+eof fn pos str = case str of { Nil -> ParseOk Unit pos str ; Cons _ _ -> ParseErr pos }
 
 --------------------------------------------------------------------------------
 -- * Parsing the pseudo-Haskell syntax
@@ -317,16 +321,16 @@ blockOrCommentL = choice
 programL :: Lexer (List Block)
 programL = pfmap catMaybes (manyTill eof blockOrCommentL)
 
-lexer :: String -> List Block
-lexer input = runParser_ programL (addLocations input)
+lexer :: FilePath -> String -> List Block
+lexer fname input = runParser_ fname programL (addLocations fname input)
 
 --------------------------------------------------------------------------------
 -- ** The parser
 
 type Parse a = Parser Token a
 
-parseTopLevelBlock :: Block -> TopLevel
-parseTopLevelBlock tokens = runParser_ topLevelP (filterWhite tokens)
+parseTopLevelBlock :: FilePath -> Block -> TopLevel
+parseTopLevelBlock fname tokens = runParser_ fname topLevelP (filterWhite tokens)
 
 filterWhite :: Block -> Block
 filterWhite = filter cond where { cond ltok = isNotWhite (located ltok) }

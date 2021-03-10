@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 #define STACK_SIZE   (4*1024*1024)
-#define HEAP_SIZE  (128*1024*1024)
+#define HEAP_SIZE  (192*1024*1024)
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
@@ -24,6 +24,7 @@ int       NStatic;
 void    **StaticFunPointers;
 int      *StaticFunArities;
 char    **ConstructorNames;
+char    **StaticStringTable;
 stack_ptr static_stack;
 
 // command line arguments
