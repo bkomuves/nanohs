@@ -34,6 +34,16 @@
 -- machine, for which an interpreter can be very easily written in C or any other 
 -- language.
 --
+-- BOOSTRAP:
+--
+-- > $ ghc -O0 --make -main-is NanoHaskell.main NanoHaskell.hs -o nanohs_via_ghc
+-- >
+-- > $ ./nanohs_via_ghc NanoHaskell.hs nanohs.c 
+-- > $ gcc -O -std=c99 nanohs.c -o nanohs_stage1
+-- >
+-- > $ ./nanohs_stage1 NanoHaskell.hs nanohs_stage2.c 
+-- > $ diff nanohs.c nanohs_stage2.c
+--
 
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
@@ -55,13 +65,13 @@ import PrimGHC
 
 -- | Name of the entry point
 nanoMainIs :: Name
-nanoMainIs = "nanoMain"
+nanoMainIs = "main"
 
 --------------------------------------------------------------------------------
 -- * Compiler entry point 
 
 -- | GHC entry point
-main = case runIO nanoMain of { Unit -> _GhcReturnUnit }
+main = runIO nanoMain 
 
 -- | Nano entry point
 nanoMain :: IO Unit
@@ -634,24 +644,22 @@ trieToList = go where { go trie = case trie of { Node mb table -> let
 --------------------------------------------------------------------------------
 -- ** IO Monad
 
-type IO a = Unit -> a
-
-runIO :: IO a -> a
-runIO action = action Unit
+-- type IO a = (Unit -> a)
 
 ioreturn :: a -> IO a
-ioreturn x = \_ -> x
+ioreturn x = (\_ -> x)
 
 ioret_ :: IO Unit
-ioret_ = \_ -> Unit
+ioret_ = (\_ -> Unit)
 
 -- | Note: we have to be very careful about how to implement bind!
 -- (because we are cheating with ML-style IO)
 iobind :: IO a -> (a -> IO b) -> IO b
+-- iobind action u = case action of { IO f -> IO (\q -> case u (f Unit) of { IO g -> g q } ) }
 iobind action u _ = u (action Unit) Unit
 
 ioerror :: String -> IO a
-ioerror msg = \_ -> error msg
+ioerror msg = (\_ -> error msg)
 
 ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
 ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
@@ -675,16 +683,19 @@ ioforM_ :: List a -> (a -> IO b) -> IO Unit
 ioforM_ list f = iomapM_ f list
 
 getChar :: IO (Maybe Char)
-getChar = getChar#
+getChar = (\u -> getChar# u)
 
 putChar :: Char -> IO Unit
-putChar c = \_ -> putChar# c
+putChar c = (\_ -> putChar# c)
 
 exit :: Int -> IO Unit
-exit k = \_ -> exit# k
+exit k = (\_ -> exit# k)
+
+print :: Show a => a -> IO Unit
+print what = (\_ -> print# what)
 
 getArg :: Int -> IO (Maybe String)
-getArg i = \_ -> getArg# i 
+getArg i = (\_ -> getArg# i)
 
 getArgs :: IO (List String)
 getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
@@ -700,16 +711,16 @@ putStrLn str = ioseq (putStr str) (putChar (chr 10))
 type FilePath = String
 
 openFile :: FilePath -> IOMode -> IO Handle
-openFile fn mode = \_ -> openFile# fn mode
+openFile fn mode = (\_ -> openFile# fn mode)
 
 hClose :: Handle -> IO Unit
-hClose h = \_ -> hClose# h
+hClose h = (\_ -> hClose# h)
 
 hGetChar :: Handle -> IO (Maybe Char)
-hGetChar h = \_ -> hGetChar# h
+hGetChar h = (\_ -> hGetChar# h)
 
 hPutChar :: Handle -> Char -> IO Unit
-hPutChar h c = \_ -> hPutChar# h c
+hPutChar h c = (\_ -> hPutChar# h c)
 
 hGetContents :: Handle -> IO String
 hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
@@ -1098,10 +1109,15 @@ eol = alternative eol_ eof
 eolIndent :: Lexer Int
 eolIndent = alternative (pseq eol_ spaces0) (preplace 0 eof)
 
+-- | with EOL
 commentL :: Lexer String
-commentL = choice [ comment1 , comment2 ] where
-  { comment1 = pseq (tokens "--" ) (ppost (many (noneOf [newlineC,carriageReturnC])) eol)
-  ; comment2 = pseq (tokens "{-#") (ppost (many (noneOf [newlineC,carriageReturnC])) eol)
+commentL = ppost commentL' eol
+
+-- | without EOL
+commentL' :: Lexer String
+commentL' = choice [ comment1 , comment2 ] where
+  { comment1 = pseq (tokens "--" ) (many (noneOf [newlineC,carriageReturnC]))
+  ; comment2 = pseq (tokens "{-#") (many (noneOf [newlineC,carriageReturnC]))
   }
 
 -- | We need to hide some stuff (for example @include@-s) from GHC
@@ -1121,7 +1137,8 @@ type Block = List LToken
 -- | Parser a line and all following indented lines
 blockL :: Lexer Block
 blockL = worker1 where
-  { line = many1 (locatedL lexemeL)
+  { line    = alternative comment (many1 (locatedL lexemeL))
+  ; comment = pseq commentL' (preturn Nil)
   ; worker  = pbind eolIndent (\k -> ifte (gt k 0) (option Nil worker1) (preturn Nil))
   ; worker1 = pbind line      (\ls1 -> pbind worker (\ls2 -> preturn (append ls1 ls2)))
   }
@@ -1213,19 +1230,24 @@ listAppsE  list = case list of { Cons f args -> appsE f args ; Nil -> error "lis
 --------------------------------------------------------------------------------
 -- ** TODO: Pattern compiler 
 
+-- simple pattern
+-- constructor pattern
+-- variable pattern
+-- wildcard patterns
+-- list pattern
 data Pattern
-  = SimP Name (List Name)         -- ^ simple pattern
-  | AppP Name (List Pattern)      -- ^ constructor pattern
-  | VarP Name                     -- ^ variable pattern
-  | WildP                         -- ^ wildcard patterns
-  | ListP (List Pattern)          -- ^ list pattern
+  = SimP Name (List Name)      
+  | AppP Name (List Pattern)   
+  | VarP Name                  
+  | WildP                      
+  | ListP (List Pattern)       
   deriving Show
 
 patternHead :: Pattern -> Maybe Name
 patternHead pat = case pat of
-  SimP con _list -> Just con
-  AppP con _list -> Just con
-  _              -> Nothing
+  { SimP con _list -> Just con
+  ; AppP con _list -> Just con
+  ; _              -> Nothing }
 
 -- -- | We translate complex pattern into iterated matching of simple patterns
 -- patternCompiler :: List BranchE -> List BranchE
@@ -1238,7 +1260,7 @@ data Prim
   = Negate | Plus | Minus | Times | Div | Mod | Chr | Ord 
   | BitAnd | BitOr | BitXor | ShiftL | ShiftR
   | IFTE | Not | And | Or | GenEQ | IntEQ | IntLT | IntLE
-  | GetChar | PutChar | GetArg | Exit | Error 
+  | GetChar | PutChar | GetArg | Exit | Error | RunIO | Print
   | OpenFile | HClose | HGetChar | HPutChar | StdIn | StdOut | StdErr
   deriving (Eq,Show)
 
@@ -1254,7 +1276,7 @@ showPrim prim = case prim of
   { Negate   -> "Negate"   ; Plus     -> "Plus"     ; Minus   -> "Minus"
   ; Times    -> "Times"    ; Div      -> "Div"      ; Mod     -> "Mod"
   ; BitAnd   -> "BitAnd"   ; BitOr    -> "BitOr"    ; BitXor  -> "BitXor"
-  ; ShiftL   -> "ShiftL"   ; ShiftR   -> "ShiftR"        
+  ; ShiftL   -> "ShiftL"   ; ShiftR   -> "ShiftR"   ; Print   -> "Print"  
   ; Chr      -> "Chr"      ; Ord      -> "Ord"      ; IFTE    -> "IFTE"
   ; Not      -> "Not"      ; And      -> "And"      ; Or      -> "Or"
   ; IntEQ    -> "IntEQ"    ; IntLT    -> "IntLT"    ; IntLE   -> "IntLE"
@@ -1262,7 +1284,7 @@ showPrim prim = case prim of
   ; GetChar  -> "GetChar"  ; PutChar  -> "PutChar"  ; GetArg  -> "GetArg" 
   ; StdIn    -> "StdIn"    ; StdOut   -> "StdOut"   ; StdErr  -> "StdErr" 
   ; HGetChar -> "HGetChar" ; HPutChar -> "HPutChar" ; HClose  -> "HClose" 
-  ; OpenFile -> "OpenFile" }
+  ; OpenFile -> "OpenFile" ; RunIO    -> "RunIO"    }
 
 type Arity = Int
 
@@ -1303,6 +1325,8 @@ primops = trieFromList
   , Pair "stdin"     (PrimOp 0  StdIn   )
   , Pair "stdout"    (PrimOp 0  StdOut  )
   , Pair "stderr"    (PrimOp 0  StdErr  )
+  , Pair "runIO"     (PrimOp 1  RunIO   )
+  , Pair "print#"    (PrimOp 1  Print   )
   ]
 
 -- | From @((f x) y) z@ we create the list [f,x,y,z]
@@ -1590,9 +1614,6 @@ data Atom
 -- pattern KstT lit  = AtmT (KstA lit )
 
 data Term
---  = VarT (Named Var )
---  | ConT (Named Con )
---  | KstT Literal
   = AtmT Atom 
   | LamT (Named Term)
   | AppT Term Atom
@@ -1612,10 +1633,7 @@ data BranchT
 transformAtom :: (Level -> Atom -> Atom) -> Level -> Term -> Term
 transformAtom f = go where 
   { go level term = case term of
-    { AtmT a -> AtmT (f level a)
---    { VarT a        -> VarT (f level a)
---    ; ConT _        -> term
---    ; KstT _        -> term
+    { AtmT a        -> AtmT (f level a)
     ; LamT nt       -> LamT (nfmap (go (inc level)) nt)
     ; AppT t a      -> AppT (go level t) (f level a)
     ; PriT p as     -> PriT p (map (f  level) as)
@@ -1635,9 +1653,6 @@ termSize term = go term where
   { goNamed named = case named of { Named _ tm -> go tm }
   ; go term = case term of
     { AtmT _       -> 1
---    { VarT _       -> 1
---    ; ConT _       -> 1
---    ; KstT _       -> 1
     ; LamT nbody   -> inc (goNamed nbody)
     ; AppT tm v    -> inc (go tm)
     ; PriT _ _     -> 1
@@ -1686,15 +1701,16 @@ con_ReadMode      = 7
 con_WriteMode     = 8
 con_AppendMode    = 9
 con_ReadWriteMode = 10
+con_IO            = 11
 
 type DConState = Pair Int DataConTable
 
 initialDConState :: DConState
-initialDConState = Pair 11 (trieFromList predefinedDataCons)
+initialDConState = Pair 12 (trieFromList predefinedDataCons)
 
 predefinedDataCons :: List (Pair String Int)
 predefinedDataCons =
-  [ Pair "False" con_False , Pair "True" con_True , Pair "Unit"    con_Unit
+  [ Pair "False" con_False , Pair "True" con_True , Pair "Unit"    con_Unit    , Pair "IO"   con_IO
   , Pair "Nil"   con_Nil   , Pair "Cons" con_Cons , Pair "Nothing" con_Nothing , Pair "Just" con_Just 
   , Pair "ReadMode"   con_ReadMode   , Pair "WriteMode"     con_WriteMode        
   , Pair "AppendMode" con_AppendMode , Pair "ReadWriteMode" con_ReadWriteMode ]
@@ -1714,7 +1730,8 @@ predefinedDataCons =
 -- *  8 = WriteMode
 -- *  9 = AppendMode
 -- * 10 = ReadWriteMode
--- * 11.. = user defined constructors
+-- * 11 = IO
+-- * 12.. = user defined constructors
 --
 -- We need to fix Int, Char, False, True, Unit, Nil, Cons, Just and Nothing
 -- and the file modes because the primops use them
@@ -1789,7 +1806,6 @@ scopeCheck dcontable = go 0 where
         ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name (LevL j) scp }
         ; scope' = foldl f scope (zip (map definedName defs) (rangeFrom level n))
         } in RecT n (map (goDefin level' scope') defs) (go level' scope' body)
--- TODO: optimize for nonrecursive lets ?
     ; CaseE what brs -> case mbAtom level scope what of
         { Just atom -> goCase level scope atom brs
         ; Nothing   -> LetT (go level scope what) (goCase (inc level) scope (VarA (Named "scrut" (IdxV 0))) brs) }
@@ -1798,7 +1814,6 @@ scopeCheck dcontable = go 0 where
         ; _       -> AtmT (KstA lit) }
     ; ListE exprs -> case exprs of 
         { Nil       -> AtmT (ConA (Named "Nil" con_Nil))
---        ; Cons e es -> AppT (AppT (ConT (Named "Cons" conCons)) (go level scope e)) (go level scope (ListE es)) }
         ; Cons e es -> go level scope (AppE (AppE (VarE "Cons") e) (ListE es)) }
     ; PrimE prim args -> case prim of { PrimOp _arity pri -> case isLazyPrim pri of 
         { False -> goArgs level scope args (PriT prim 
@@ -1808,7 +1823,6 @@ scopeCheck dcontable = go 0 where
   ; goArgs level scope args body = case args of 
       { Nil            -> body 
       ; Cons this rest -> LetT (go level scope this) (goArgs (inc level) scope rest body) }
---      TODO: this is inefficient when args are already Vars
   ; goDefin level scope defin = case defin of { Defin name what -> Named name (go level scope what) }
   ; goCase level scope var branches = CasT var (map goBranch branches) where
     { goBranch branch = case branch of
@@ -1903,6 +1917,9 @@ stringToValue = compose listToValue (map charToValue)
 valueToString :: Value -> String
 valueToString = compose (map valueToChar) valueToList
 
+maybeStringToValue :: Maybe String -> Value
+maybeStringToValue mb = case mb of { Nothing -> ConV con_Nothing Nil ; Just s -> ConV con_Just (singleton (stringToValue s)) }
+
 --------------------------------------------------------------------------------
 -- ** Evaluating primops
 
@@ -1939,21 +1956,20 @@ evalPrim prim args = case prim of
   ; Mod     -> binary  args (evalfunIII mod   )
   ; Chr     -> unary   args (compose3 charToValue chr valueToInt )
   ; Ord     -> unary   args (compose3 intToValue  ord valueToChar)
---  ; IFTE    -> error "ifte: this has to be implemented somewhere else because of lazyness"
---  ; And     -> binary  args (evalfunBBB and )
---  ; Or      -> binary  args (evalfunBBB or  )
   ; Not     -> unary   args (evalfunBB  not )
---  ; GenEQ   -> binary  args (\x y -> boolToValue (eqValue x y))
   ; IntEQ   -> binary  args (evalfunIIB eq  )
   ; IntLT   -> binary  args (evalfunIIB lt  )
   ; IntLE   -> binary  args (evalfunIIB le  )
-  ; GetChar -> unary   args (compose3 maybeCharToValue (\_ -> getChar   Unit) valueToUnit)
-  ; PutChar -> unary   args (compose3 unitToValue      (\c -> putChar c Unit) valueToChar)
-  ; Exit    -> unary   args (compose3 unitToValue      (\k -> exit    k Unit) valueToInt )
---  ; GetArg  -> ??? where should the interpreter get the arguments ???
---  ; IsEOF   -> unary   args (compose3 boolToValue isEOF   valueToUnit)
+  ; GetChar -> unary   args (compose3 maybeCharToValue   (\u -> getChar# u) valueToUnit)
+  ; PutChar -> unary   args (compose3 unitToValue        (\c -> putChar# c) valueToChar)
+  ; Exit    -> unary   args (compose3 unitToValue        (\k -> exit#    k) valueToInt )
+  ; GetArg  -> unary   args (compose3 maybeStringToValue (\n -> getArg#  n) valueToInt ) 
   ; _       -> error "evalPrim: unimplemented primop"
   }
+--  ; GenEQ   -> binary  args (\x y -> boolToValue (eqValue x y))
+--  ; IFTE    -> error "ifte: this has to be implemented somewhere else because of lazyness"
+--  ; And     -> binary  args (evalfunBBB and )
+--  ; Or      -> binary  args (evalfunBBB or  )
 
 --------------------------------------------------------------------------------
 -- ** The evaluator
@@ -2209,11 +2225,6 @@ closureConvert :: Int -> Name -> Level -> Level -> Term -> ClosM Lifted
 closureConvert nstatic nameprefix boundary = go where
   { prefixed name = addPrefix nameprefix name
   ; goVar level idx = IdxV idx
---  ; goVar level idx = let { j = minus level (inc idx) } in 
---      ifte (ge j boundary) (IdxV idx)
---        (case mapLookup j closEnv of
---          { Nothing -> error "closureConvert: fatal error: variable not in the pruned environment"
---          ; Just m  -> let { i = plus (minus level boundary) m } in IdxV i })
   ; goAtom level atom = case atom of 
       { VarA named -> case named of { Named name var -> case var of
         { IdxV idx   -> VarA (Named name (goVar level idx)) 
@@ -2225,9 +2236,8 @@ closureConvert nstatic nameprefix boundary = go where
     ; AppT t1 a2    -> sliftA2 AppF (go level t1) (sreturn (goAtom level a2))
     ; PriT pri args -> sreturn (PriF pri  ( map  (goAtom level) args))
     ; LZPT pri args -> sfmap   (LZPF pri) (smapM (go     level) args)
-    ; LamT tm       -> sfmap LamF (termToClosure nstatic (prefixed "lambda") (inc level) (forgetName tm))
---    ; LamT _        -> case recogLamsT term of { Pair args body ->
---             sfmap LamF (lambdaToClosure "lambda" level (LambdaT (length args) body)) }
+  ; LamT tm       -> sfmap LamF (termToClosure nstatic (prefixed "lambda") (inc level) (forgetName tm))
+  -- ??????
     ; CasT v brs    -> sfmap (CasF (goAtom level v)) (smapM (goBranch level) brs)
     ; RecT n nts tm -> let { level' = plus level n }
                        in  sliftA2 (RecF n) (smapM (goRec1 level') nts) (go level' tm) 
@@ -2236,8 +2246,9 @@ closureConvert nstatic nameprefix boundary = go where
   ; goBranch level br  = case br of
     { DefaultT        rhs -> sfmap (DefaultF       ) (termToClosure    nstatic (prefixed "default")      level            rhs ) 
     ; BranchT named n rhs -> sfmap (BranchF named n) (lambdaToClosure nstatic  (prefixed (nameOf named)) level (LambdaT n rhs))
-                                                -- (termToClosure nstatic (prefixed (nameOf named)) (plus level n) rhs)
     }}
+--    ; LamT _        -> case recogLamsT term of { Pair args body ->
+--             sfmap LamF (lambdaToClosure "lambda" level (LambdaT (length args) body)) }
 
 --------------------------------------------------------------------------------
 -- * C language code generation
@@ -2323,14 +2334,12 @@ makeStaticFunctionTables toplevs = sseq ptrs arities where
   }
 
 makeDataConTable :: DataConTable -> CodeGenM_
-makeDataConTable trie = ssequence_
+makeDataConTable trie = let { list = mapFromList (map swap (trieToList trie)) } in ssequence_
   [ addLines [ "char *datacon_table[] = " ]
   , sforM_ (zipFirstRest ("  { ") ("  , ") list) (\pair -> 
       case pair of { Pair prefix pair2 -> case pair2 of { Pair idx name ->
         addWords [ prefix , doubleQuoteString name , "   // " , showInt idx ] }})
   , addLines [ "  };" ] ]
-  where 
-    list = mapFromList (map swap (trieToList trie))
 
 liftedProgramToCode :: DataConTable -> LiftedProgram -> CodeGenM_
 liftedProgramToCode dcontable pair = case pair of { LProgram toplevs topidxs main -> 
@@ -2373,9 +2382,9 @@ toplevToCode nfo toplev = case toplev of { TopLev named statfun -> case named of
     [ addLine ""
     , addWords [ "// static function `" , name , "` with arity = " , showInt envsize , " + " , showInt arity ]
     , addWords [ "heap_ptr " , staticLabel static , "() {" ]
---    , debugInfoToCode name statfun
     , sbind (functionBodyToCode nfo statfun) (\fresult -> addWords [ "return (" , fresult , ");" ] )
     , addLine "}" ] }}}
+--    , debugInfoToCode name statfun
 
 debugInfoToCode name statfun = case statfun of { StatFun envsize arity lifted -> let { ntotal = plus envsize arity } in ssequence_
   [ addWords [ "printf(" , doubleQuoteStringLn "=======================" , ");" ]
@@ -2466,27 +2475,27 @@ liftedToCode nfo lifted = case lifted of
 
 lazyPrimToCode :: StatInfo -> Prim -> List Lifted -> CodeGenM Name
 lazyPrimToCode nfo prim args = case prim of
-  Or   -> binary  args (\arg1 arg2 -> withFreshVar "res_or"    (\fres -> 
-            sbind (addWords [ "heap_ptr " , fres , ";" ])      (\_    -> 
-            sbind (liftedToCode nfo arg1)                      (\res1 -> 
-            sbind (addWords [ "if TO_BOOL(" , res1 , ") { " , fres , " = " , res1 , "; } else { " ]) (\_ -> 
-            sbind (liftedToCode nfo arg2)                      (\res2 -> 
-            sbind (addWords [ fres , " = " , res2 , "; } "])   (\_ -> sreturn fres)))))))
-  And  -> binary  args (\arg1 arg2 -> withFreshVar "res_and"   (\fres -> 
-            sbind (addWords [ "heap_ptr " , fres , ";" ])      (\_    -> 
-            sbind (liftedToCode nfo arg1)                      (\res1 -> 
-            sbind (addWords [ "if TO_BOOL(" , res1 , ") { " ]) (\_    -> 
-            sbind (liftedToCode nfo arg2)                      (\res2 -> 
-            sbind (addWords [ fres , " = " , res2 , "; } else { " , fres , " = " , res1 , "; } "])  (\_ -> sreturn fres)))))))
-  IFTE -> ternary args (\barg arg1 arg2 -> withFreshVar "res_if"    (\fres ->
-            sbind (addWords [ "heap_ptr " , fres , ";" ])           (\_    -> 
-            sbind (liftedToCode nfo barg)                           (\bres -> 
-            sbind (addWords [ "if TO_BOOL(" , bres , ") { " ])      (\_    -> 
-            sbind (liftedToCode nfo arg1)                           (\res1 -> 
-            sbind (addWords [ fres , " = " , res1 , "; } else { "]) (\_    -> 
-            sbind (liftedToCode nfo arg2)                           (\res2 -> 
-            sbind (addWords [ fres , " = " , res2 , "; }" ])        (\_ -> sreturn fres)))))))))
-  _    -> error "unimplemented lazy primop"
+  { Or   -> binary  args (\arg1 arg2 -> withFreshVar "res_or"    (\fres -> 
+              sbind (addWords [ "heap_ptr " , fres , ";" ])      (\_    -> 
+              sbind (liftedToCode nfo arg1)                      (\res1 -> 
+              sbind (addWords [ "if TO_BOOL(" , res1 , ") { " , fres , " = " , res1 , "; } else { " ]) (\_ -> 
+              sbind (liftedToCode nfo arg2)                      (\res2 -> 
+              sbind (addWords [ fres , " = " , res2 , "; } "])   (\_ -> sreturn fres)))))))
+  ; And  -> binary  args (\arg1 arg2 -> withFreshVar "res_and"   (\fres -> 
+              sbind (addWords [ "heap_ptr " , fres , ";" ])      (\_    -> 
+              sbind (liftedToCode nfo arg1)                      (\res1 -> 
+              sbind (addWords [ "if TO_BOOL(" , res1 , ") { " ]) (\_    -> 
+              sbind (liftedToCode nfo arg2)                      (\res2 -> 
+              sbind (addWords [ fres , " = " , res2 , "; } else { " , fres , " = " , res1 , "; } "])  (\_ -> sreturn fres)))))))
+  ; IFTE -> ternary args (\barg arg1 arg2 -> withFreshVar "res_if"    (\fres ->
+              sbind (addWords [ "heap_ptr " , fres , ";" ])           (\_    -> 
+              sbind (liftedToCode nfo barg)                           (\bres -> 
+              sbind (addWords [ "if TO_BOOL(" , bres , ") { " ])      (\_    -> 
+              sbind (liftedToCode nfo arg1)                           (\res1 -> 
+              sbind (addWords [ fres , " = " , res1 , "; } else { "]) (\_    -> 
+              sbind (liftedToCode nfo arg2)                           (\res2 -> 
+              sbind (addWords [ fres , " = " , res2 , "; }" ])        (\_ -> sreturn fres)))))))))
+  ; _    -> error "unimplemented lazy primop" }
 
 letToCode :: StatInfo -> ClosureF -> Lifted -> CodeGenM Name
 letToCode nfo cls body = 
@@ -2506,7 +2515,7 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
     [ addWords [ "// letrec " , showInt n ]
     , addWords [ "stack_ptr " , pre_sp  , " = rts_stack_allocate(" , showInt n , ");" ]
     , addWords [ "stack_ptr " , post_sp , " = SP;" ]
--- allocate closures
+    -- allocate closures
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of { ClosureF cbody env arity ->
         case cbody of 
           { InlineBody lifted -> sbind (functionBodyToCode nfo (StatFun (length env) arity lifted)) (\res ->
@@ -2516,20 +2525,17 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
              ; _   -> let { envsize = length env } in 
                 addWords [  pre_sp, "[", showInt j , "] = (uint64_t) rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ] 
              }}}})
--- fill environments (we need to this _after_ all the allocation!)
+    -- fill environments (we need to this _after_ all the allocation!)
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of { ClosureF cbody env arity ->
         case cbody of 
           { InlineBody _ -> sreturn Unit
           ; StaticBody _ -> case env of { Nil -> sreturn Unit ; _ -> withFreshVar "tgt" (\tgt -> sseq
               (addDefin tgt (concat [ "(heap_ptr) " , pre_sp , "[", showInt j , "]" ]))
               (copyEnvironmentTo nfo "SP" tgt 2 env) )} }}})
--- evaluate thunks
+    -- evaluate thunks
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of {
         ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) 
           (addWords [ "rts_force_thunk_at( " , pre_sp, " + ", showInt j , " );" ]) }})
---        ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) (withFreshVar "val" (\val -> sseq
---          (addWords [ "heap_ptr " , val , " = rts_force_value( (heap_ptr) " , pre_sp, "[", showInt j , "] );" ])
---          (addWords [ pre_sp, "[", showInt j , "] = (uint64_t) " , val , " ;" ]) )) }})
     , sbind (evalToReg nfo "body" body) (\res -> addDefin obj res)   
     , addWords [ "SP = " , pre_sp , ";" ]
     ]) (sreturn obj))
@@ -2651,6 +2657,6 @@ applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ 
         , copyEnvironmentTo' nfo "SP" obj 1 args
         ]) (sreturn obj)) }
     ; _ -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
-  ; _ -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
+  ; _   -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
 
 --------------------------------------------------------------------------------

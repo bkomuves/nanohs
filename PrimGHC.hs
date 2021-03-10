@@ -41,6 +41,17 @@ data Maybe a = Nothing | Just a deriving Show
 
 type Handle = IO.Handle
 
+type IO a = (Unit -> a)
+
+runIO :: IO a -> IO.IO a
+runIO (f) = case f Unit of { y -> Prelude.return y }
+
+-- _GhcUnit :: ()
+-- _GhcUnit = ()
+
+-- _GhcReturnUnit :: Prelude.IO ()
+-- _GhcReturnUnit = Prelude.return ()
+
 --------------------------------------------------------------------------------
 -- * Built-ins \/ primops
 
@@ -113,6 +124,10 @@ le x y = _fromGhcBool ((Prelude.<=) x y)
 {-# NOINLINE error #-}
 error :: String -> a
 error msg = Prelude.error (_toGhcString msg)
+
+{-# NOINLINE print# #-}
+print# :: Show a => a -> Unit
+print# what = Unsafe.unsafePerformIO ((Prelude.>>) (Prelude.print what) (Prelude.return Unit))
 
 --------------------------------------------------------------------------------
 -- * ML-style IO (we use the hash to distinguish from the IO monad)
@@ -187,12 +202,6 @@ hPutChar# h c = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutChar h c) (Prelude
 
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types
-
-_GhcUnit :: ()
-_GhcUnit = ()
-
-_GhcReturnUnit :: Prelude.IO ()
-_GhcReturnUnit = Prelude.return ()
 
 _fromGhcBool :: Prelude.Bool -> Bool
 _fromGhcBool b = case b of { Prelude.True -> True ; Prelude.False -> False }

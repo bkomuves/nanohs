@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define STACK_SIZE    (1024*1024)
-#define HEAP_SIZE  (32*1024*1024)
+#define STACK_SIZE   (4*1024*1024)
+#define HEAP_SIZE  (128*1024*1024)
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
@@ -72,6 +72,7 @@ char **ArgVector;
 #define CON_WriteMode       8
 #define CON_AppendMode      9
 #define CON_ReadWriteMode  10
+#define CON_IO             11
 
 #define FALSE    NULLARY_CON( CON_False   )
 #define TRUE     NULLARY_CON( CON_True    )
@@ -450,6 +451,34 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 
 // -----------------------------------------------------------------------------
 
+// runIO :: IO a -> a
+heap_ptr prim_RunIO(heap_ptr funobj) {
+  // recall that "type IO a = (Unit -> a)"
+  stack_ptr loc = rts_stack_allocate(1);
+  loc[0] = (uint64_t) UNIT;
+  return rts_apply( funobj , 1 );
+}  
+
+// // runIO :: IO a -> a
+// heap_ptr prim_RunIO(heap_ptr arg) {
+//   // recall that "data IO a = IO (Unit -> a)"
+//   heap_ptr ptr = rts_force_value(arg);
+//   if( IS_HEAP_PTR(ptr) && (ptr[0] == HTAG_DATACON(CON_IO,1)) ) {
+//     heap_ptr funobj = (heap_ptr) ptr[1];
+//     stack_ptr loc = rts_stack_allocate(1);
+//     loc[0] = (uint64_t) UNIT;
+//     return rts_apply( funobj , 1 );
+//   }  
+//   else {
+//     fprintf(stderr,"PROBLEM:\n");
+//     rts_generic_println(arg); 
+//     rts_internal_error("runIO: argument is not an IO action");
+//     return UNIT;
+//   }
+// }
+
+// -----------------------------------------------------------------------------
+
 // getChar# :: Unit -> Maybe Char
 heap_ptr prim_GetChar(heap_ptr arg1) {
   int c = getchar();
@@ -469,6 +498,12 @@ heap_ptr prim_PutChar(heap_ptr arg1) {
 // exit# :: Int -> Unit
 heap_ptr prim_Exit(heap_ptr arg1) {
   exit(TO_INT(arg1));
+  return UNIT;
+}
+
+// print# :: String -> Unit
+heap_ptr prim_Print(heap_ptr arg1) {
+  rts_generic_println(arg1);
   return UNIT;
 }
 
