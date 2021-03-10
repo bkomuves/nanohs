@@ -2176,11 +2176,13 @@ termToInlineClosure nstatic name level tm =
   sbind (closureConvert nstatic name 0 level tm) (\lifted ->
   sreturn (ClosureF (InlineBody lifted) Nil 0))
 
-doInline :: Term -> Bool
-doInline _ = False
---doInline tm = case tm of
---  { LamT _     -> False
---  ; _          -> le (termSize tm) 25 }
+-- doInline :: Term -> Bool
+-- doInline _ = False
+
+doInline tm = case tm of
+  { LamT _     -> False
+  ; AtmT _     -> True
+  ; _          -> le (termSize tm) 48 }
 
 termToClosure :: Int -> Name -> Level -> Term -> ClosM ClosureF
 termToClosure nstatic name level term = ifte (doInline term) 
