@@ -71,7 +71,7 @@ nanoMainIs = "main"
 -- * Compiler entry point 
 
 -- | GHC entry point
-main = runIO nanoMain 
+main = runIO# nanoMain 
 
 -- | Nano entry point
 nanoMain :: IO Unit
@@ -1325,7 +1325,7 @@ primops = trieFromList
   , Pair "stdin"     (PrimOp 0  StdIn   )
   , Pair "stdout"    (PrimOp 0  StdOut  )
   , Pair "stderr"    (PrimOp 0  StdErr  )
-  , Pair "runIO"     (PrimOp 1  RunIO   )
+  , Pair "runIO#"    (PrimOp 1  RunIO   )
   , Pair "print#"    (PrimOp 1  Print   )
   ]
 
@@ -1579,6 +1579,9 @@ data Var
   | TopV Static
   deriving Show
 
+shiftVar :: Int -> Var -> Var
+shiftVar ofs var = case var of { IdxV i -> IdxV (plus i ofs) ; _ -> var }
+
 prettyVar :: Var -> String
 prettyVar var = case var of 
   { IdxV i -> concat [  "de Bruijn (" , showInt i , ")" ] 
@@ -1604,7 +1607,9 @@ data Atom
   | KstA Literal
   deriving Show
 
--- type Atom = Named Var
+-- | Shift de Bruijn indices
+shiftAtom :: Int -> Atom -> Atom
+shiftAtom ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVar ofs) namedVar) ; _ -> atom }
 
 --------------------------------------------------------------------------------
 -- Terms
@@ -1816,13 +1821,27 @@ scopeCheck dcontable = go 0 where
         { Nil       -> AtmT (ConA (Named "Nil" con_Nil))
         ; Cons e es -> go level scope (AppE (AppE (VarE "Cons") e) (ListE es)) }
     ; PrimE prim args -> case prim of { PrimOp _arity pri -> case isLazyPrim pri of 
-        { False -> goArgs level scope args (PriT prim 
-            (zipWithIndex (\i j -> VarA (Named (appendInt "name" j) (IdxV i))) (reverse (range (length args))) ))
+        { False -> goPrim prim 0 level scope Nil args 
+      --  { False -> goArgs level scope args (PriT prim 
+      --      (zipWithIndex (\i j -> VarA (Named (appendInt "name" j) (IdxV i))) (reverse (range (length args))) ))
         ; True  -> LZPT prim (map (go level scope) args) }}
     }
-  ; goArgs level scope args body = case args of 
-      { Nil            -> body 
-      ; Cons this rest -> LetT (go level scope this) (goArgs (inc level) scope rest body) }
+  -- ; finishPrim :: PrimOp -> List (Either Term Atom) -> Int -> Term 
+  ; finishPrim prim theEis ofs = let 
+      { theVars = zipWithIndex (\i j -> VarA (Named (appendInt "parg" j) (IdxV i))) (reverse (range ofs)) 
+      ; worker eis vars atoms = case eis of { Nil -> PriT prim (reverse atoms) ; Cons ei eis' -> case ei of
+          { Right atom -> worker eis' vars (Cons (shiftAtom ofs atom) atoms) 
+          ; Left  term -> case vars of { Cons var vars' -> LetT term (worker eis' vars' (Cons var atoms)) }}}
+      } in worker theEis theVars Nil
+  -- ; goPrim :: PrimOp -> Int -> Level -> Scope -> List (Either Term Atom) -> List Expr -> Term 
+  ; goPrim prim ofs level scope newargs oldargs = case oldargs of 
+      { Nil            -> finishPrim prim (reverse newargs) ofs 
+      ; Cons this rest -> case mbAtom (minus level ofs) scope this of 
+        { Just atom -> goPrim prim      ofs       level  scope (Cons (Right atom                 ) newargs) rest 
+        ; Nothing   -> goPrim prim (inc ofs) (inc level) scope (Cons (Left  (go level scope this)) newargs) rest }}
+  -- ; goArgs level scope args body = case args of 
+  --     { Nil            -> body 
+  --     ; Cons this rest -> LetT (go level scope this) (goArgs (inc level) scope rest body) }
   ; goDefin level scope defin = case defin of { Defin name what -> Named name (go level scope what) }
   ; goCase level scope var branches = CasT var (map goBranch branches) where
     { goBranch branch = case branch of
@@ -2192,16 +2211,16 @@ termToInlineClosure nstatic name level tm =
   sbind (closureConvert nstatic name 0 level tm) (\lifted ->
   sreturn (ClosureF (InlineBody lifted) Nil 0))
 
--- doInline :: Term -> Bool
--- doInline _ = False
+-- doInlineClosure :: Term -> Bool
+-- doInlineClosure _ = False
 
-doInline tm = case tm of
+doInlineClosure tm = case tm of
   { LamT _     -> False
   ; AtmT _     -> True
   ; _          -> le (termSize tm) 48 }
 
 termToClosure :: Int -> Name -> Level -> Term -> ClosM ClosureF
-termToClosure nstatic name level term = ifte (doInline term) 
+termToClosure nstatic name level term = ifte (doInlineClosure term) 
   (termToInlineClosure nstatic name level term) 
   (termToStaticClosure nstatic name level term)
 
@@ -2236,8 +2255,8 @@ closureConvert nstatic nameprefix boundary = go where
     ; AppT t1 a2    -> sliftA2 AppF (go level t1) (sreturn (goAtom level a2))
     ; PriT pri args -> sreturn (PriF pri  ( map  (goAtom level) args))
     ; LZPT pri args -> sfmap   (LZPF pri) (smapM (go     level) args)
-  ; LamT tm       -> sfmap LamF (termToClosure nstatic (prefixed "lambda") (inc level) (forgetName tm))
-  -- ??????
+    ; LamT _        -> case recogLamsT term of { Pair args body ->
+                         sfmap LamF (lambdaToClosure nstatic (prefixed "lambda") level (LambdaT (length args) body)) }
     ; CasT v brs    -> sfmap (CasF (goAtom level v)) (smapM (goBranch level) brs)
     ; RecT n nts tm -> let { level' = plus level n }
                        in  sliftA2 (RecF n) (smapM (goRec1 level') nts) (go level' tm) 
@@ -2247,8 +2266,6 @@ closureConvert nstatic nameprefix boundary = go where
     { DefaultT        rhs -> sfmap (DefaultF       ) (termToClosure    nstatic (prefixed "default")      level            rhs ) 
     ; BranchT named n rhs -> sfmap (BranchF named n) (lambdaToClosure nstatic  (prefixed (nameOf named)) level (LambdaT n rhs))
     }}
---    ; LamT _        -> case recogLamsT term of { Pair args body ->
---             sfmap LamF (lambdaToClosure "lambda" level (LambdaT (length args) body)) }
 
 --------------------------------------------------------------------------------
 -- * C language code generation

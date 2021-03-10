@@ -13,14 +13,22 @@ import qualified Prelude
 
 import qualified Control.Monad
 
+import System.Environment
+
 import PrimGHC
 import NanoHaskell hiding ( main )
 
 --------------------------------------------------------------------------------
 
 main = do
-  Prelude.putStrLn "*** fuck"
-  text <- Prelude.readFile "test4.nano" -- NanoHaskell.hs" -- "test_readint"
+  Prelude.putStrLn "*** main.hs"
+  args <- System.Environment.getArgs
+  case args of
+    [] -> error "usage: runghc main.hs <inputfile>"
+    (fn:_) -> compile fn
+
+compile fname = do
+  text <- Prelude.readFile fname
 
   let blocks = (lexer (_fromGhcString text))
   Prelude.putStrLn ("number of top level blocks = " ++ show (length blocks))

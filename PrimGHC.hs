@@ -43,8 +43,10 @@ type Handle = IO.Handle
 
 type IO a = (Unit -> a)
 
-runIO :: IO a -> IO.IO a
-runIO (f) = case f Unit of { y -> Prelude.return y }
+runIO# :: IO a -> IO.IO a
+runIO# (f) = do
+  Prelude.putStrLn "[rts version : GHC]"
+  case f Unit of { y -> Prelude.return y }
 
 -- _GhcUnit :: ()
 -- _GhcUnit = ()

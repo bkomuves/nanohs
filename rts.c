@@ -46,7 +46,7 @@ char **ArgVector;
 #define IS_HEAP_PTR(ptr)   HAS_PTAG(ptr,PTAG_PTR)
 
 #define NULLARY_CON(con) ( (heap_ptr)(uint64_t) (((con)<<3) + PTAG_CON) )
-#define INT_LITERAL(i)   ( (heap_ptr)(uint64_t) (((i  )<<3) + PTAG_INT) )
+#define INT_LITERAL(i)   ( (heap_ptr)(uint64_t) ((( (uint64_t)(i) )<<3) + PTAG_INT) )
 #define CHR_LITERAL(c)   INT_LITERAL(c)
 
 #define TO_INT(ptr)      (((int64_t)(ptr))>>3)
@@ -454,6 +454,7 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 // runIO :: IO a -> a
 heap_ptr prim_RunIO(heap_ptr funobj) {
   // recall that "type IO a = (Unit -> a)"
+  printf("[rts version : C]\n");
   stack_ptr loc = rts_stack_allocate(1);
   loc[0] = (uint64_t) UNIT;
   return rts_apply( funobj , 1 );
