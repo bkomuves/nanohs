@@ -94,9 +94,21 @@ heap_ptr rts_internal_error(const char *msg) {
   return UNIT;
 }
 
+// #define SP_GRANULARITY (   512*1024)
+// #define HP_GRANULARITY (8*1024*1024)
+// heap_ptr SP_threshold;
+// heap_ptr HP_threshold;
+
 heap_ptr rts_heap_allocate(int size) {
   heap_ptr obj = HP;
   HP += size;
+//    // heap debugging
+//    if (HP >= HP_threshold) {
+//      int k = HP_threshold - Heap_begin;
+//      int mb = k / 1024/1024;
+//      fprintf(stderr,"HP threshold: %d million words\n",mb);
+//      HP_threshold = HP_threshold + HP_GRANULARITY;
+//    }
   if (HP >= Heap_end) rts_internal_error("heap overflow");
   return obj;
 }
@@ -104,6 +116,13 @@ heap_ptr rts_heap_allocate(int size) {
 stack_ptr rts_stack_allocate(int size) {
   stack_ptr loc = SP;
   SP += size;
+//    // stack debugging
+//    if (SP >= SP_threshold) {
+//      int k = SP_threshold - Stack_begin;
+//      int kilo = k / 1024;
+//      fprintf(stderr,"SP threshold: %d kilo words\n",kilo);
+//      SP_threshold = SP_threshold + SP_GRANULARITY;
+//    }
   if (SP >= Stack_end) rts_internal_error("stack overflow");
   return loc;
 }
@@ -455,7 +474,7 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 // runIO :: IO a -> a
 heap_ptr prim_RunIO(heap_ptr funobj) {
   // recall that "type IO a = (Unit -> a)"
-  printf("[rts version : C]\n");
+  printf("[rts version = C99]\n");
   stack_ptr loc = rts_stack_allocate(1);
   loc[0] = (uint64_t) UNIT;
   return rts_apply( funobj , 1 );
@@ -606,6 +625,9 @@ void rts_initialize(int argc, char **argv) {
   SP = Stack_begin;
   HP = Heap_begin;
 
+//  SP_threshold = SP;
+//  HP_threshold = HP;
+//
   // initialize static stack. This simulates a top-level letrec, but with a 
   // letrec we couldn't really optimize the fully static function calls?
   static_stack = (heap_ptr) malloc( 8 * NStatic );

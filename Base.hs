@@ -37,6 +37,12 @@ compose3 f g h = \x -> f (g (h x))
 flip :: (a -> b -> c) -> (b -> a -> c)
 flip f = \x y -> f y x
 
+fix :: ((a -> b) -> (a -> b)) -> a -> b
+fix u x = u (fix u) x
+
+-- test_fix :: Int -> List Int  
+-- test_fix x = fix (\rec n -> ifte (eq n 0) Nil (Cons n (rec (dec n)))) x
+
 --------------------------------------------------------------------------------
 -- ** numbers
 
@@ -77,7 +83,7 @@ compare x y = ifte (lt x y) LT (ifte (eq x y) EQ GT)
 
 -- | the list [0,1,...n-1]
 range :: Int -> List Int
-range = rangeFrom 0
+range n = rangeFrom 0 n
 
 -- | the list [k,k+1,...k+n-1]
 rangeFrom :: Int -> Int -> List Int
@@ -241,6 +247,10 @@ append3 xs ys zs = append xs (append ys zs)
 
 concat :: List (List a) -> List a
 concat lls = flipFoldr append lls Nil
+
+-- | > reverseAppend xs ys = append (reverse xs) ys
+reverseAppend :: List a -> List a -> List a
+reverseAppend xs ys = case xs of { Nil -> ys ; Cons z zs -> reverseAppend zs (Cons z ys) }
 
 map :: (a -> b) -> List a -> List b
 map f = go where { go xs = case xs of { Nil -> Nil ; Cons x xs -> Cons (f x) (map f xs) } }

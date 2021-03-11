@@ -1,6 +1,7 @@
 #!/bin/bash
 
-SRC="NanoHaskell.hs"
+# SRC="NanoHaskell.hs"
+SRC="Base.hs Containers.hs Core.hs DataCon.hs Eval.hs Nano.hs Parser.hs PrimGHC.hs PrimOps.hs Syntax.hs Types.hs"
 
 FULL=`cat                $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'` 
 ANNT=`grep "::"          $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
@@ -10,7 +11,7 @@ DCON=`grep "^  |"        $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
 DERV=`grep "^  deriving" $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
 # ASML=`grep "^  , \""   $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`
 
-HASKELL_CLOC=`cloc --quiet --csv NanoHaskell.hs | grep Haskell`
+HASKELL_CLOC=`cloc --quiet --csv $SRC | grep Haskell`
 ASM_CLOC=`cloc --quiet --csv rts.asm sys_macos.asm | grep Assembly`
 C_CLOC=`cloc --quiet --csv rts.c | grep C`
 

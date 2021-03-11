@@ -54,22 +54,47 @@ main = runIO# nanoMain
 
 -- | Nano entry point
 nanoMain :: IO Unit
-nanoMain = iobind getArgs (\args -> case args of { Nil -> printUsage ; Cons input rest -> 
-  case rest of { Nil -> printUsage ; Cons output _ -> runCompiler input output }})
+nanoMain = iobind getArgs (\args -> case args of { Nil -> printUsage ; Cons cmd args' -> handleCommand cmd args' }) where
+  { handleCommand cmd args = case cmd of { Cons dash cmd1 -> ifte (cneq dash '-') printUsage (case cmd1 of { Cons c _ -> 
+      ifte (ceq c 'i') (interpret args) (ifte (ceq c 'c') (compile args) printUsage) })}
+  ; interpret args = case args of { Cons input rest -> runInterpreter input ; _ -> printUsage } 
+  ; compile   args = case args of { Cons input rest -> case rest of { Cons output _ -> runCompiler input output ; _ -> printUsage } ; _ -> printUsage }}
 
 printUsage :: IO Unit
-printUsage = putStrLn "usage: nanohs <input.hs> <output.c>"
+printUsage = iomapM_ putStrLn 
+  [ "usage:"
+  , "./nanohs -i <input.hs>               # interpret"
+  , "./nanohs -c <input.hs> <output.c>    # compile"   ] 
 
 runCompiler :: FilePath -> FilePath -> IO Unit
-runCompiler inputFn outputFn =
+runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
+  PrgData strlits dconTrie coreprg -> 
+    ioseq (putStrLn "compiling...") (let
+      { lprogram = coreProgramToLifted coreprg
+      ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
+      } in writeFile outputFn (unlines code) )})
+
+runInterpreter :: FilePath -> IO Unit
+runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
+  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg defins main ->
+    ioseq (putStrLn "interpreting...") (let 
+     { toplevs  = map definedWhat defins
+     ; startEnv = Env toplevs Nil strlits
+     } in printValue (eval startEnv main)) }})
+    
+--------------------------------------------------------------------------------
+-- ** Load and parse source files
+
+data ProgramData = PrgData (List String) DataConTable CoreProgram
+
+loadModules :: FilePath -> IO ProgramData
+loadModules inputFn =
   iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> (let 
       { defins0  = catMaybes (map mbDefin toplevs)
       ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins -> let 
         { dconTrie = collectDataCons defins
         ; coreprg  = programToCoreProgram defins
-        ; lprogram = coreProgramToLifted coreprg
-        ; code     = runCodeGenM_ (liftedProgramToCode strlits dconTrie lprogram)
-        } in writeFile outputFn (unlines code) }) }) 
+        } in ioreturn (PrgData strlits dconTrie coreprg) })}) 
 
 type Files  = List FilePath
 type Loaded = Pair Files (List TopLevel)
@@ -516,8 +541,8 @@ makeStringLitTable list = ssequence_
       case pair of { Pair prefix str -> addWords [ prefix , doubleQuoteString str ] })
   , addLines [ "  };" ] ]
 
-liftedProgramToCode :: StringLitTable -> DataConTable -> LiftedProgram -> CodeGenM_
-liftedProgramToCode strlits dcontable pair = case pair of { LProgram toplevs topidxs main -> 
+liftedProgramToCode :: FilePath -> StringLitTable -> DataConTable -> LiftedProgram -> CodeGenM_
+liftedProgramToCode source strlits dcontable pair = case pair of { LProgram toplevs topidxs main -> 
   let { ntoplevs = length toplevs ; nfo = StatInfo topidxs } in ssequence_
     [ addLines [ "" , concat [ "#include " , doubleQuoteString "rts.c" ] ]
     , addLines [ "" , "// ----------------------------------------" , "" ]
@@ -536,6 +561,7 @@ liftedProgramToCode strlits dcontable pair = case pair of { LProgram toplevs top
                , "StaticStringTable = string_table;" ]
     , addWords [ "NStatic           = ", showInt ntoplevs , " ;   // number of static functions " ]
     , addLines [ "rts_initialize(argc,argv);" , "" , "// main" ]
+    , addWords [ "printf(" , doubleQuoteString (concat [ "[source file = " , source , "]" , backslashEn ]) , ");" ]
     , sbind (liftedToCode nfo main) (\code -> withFreshVar "fresult" (\fresult -> sseq3
         (addWords [ "heap_ptr ", fresult , " = " , code , " ; " ])
         (addWords [ "// printf(" , doubleQuoteStringLn "done." , ");" ])

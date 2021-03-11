@@ -42,32 +42,35 @@ data Value
   | LamV (Value -> Value)
   | ThkV Env Term
 
--- -- | Force thunks
--- forceValue :: Value -> Value
--- forceValue val = case val of { ThkV env tm -> eval env tm ; _ -> val }
+-- | Force thunks
+forceValue :: Value -> Value
+forceValue val = case val of { ThkV env tm -> eval env tm ; _ -> val }
 
--- showValue :: Value -> String
--- showValue value = case value of
---   { IntV n -> showInt n
---   ; ChrV c -> quoteChar c
---   ; ConV con args -> let { tag = appendInt "Con#" con } in case args of { Nil -> tag
---     ; Cons _ _ -> parenString (unwords (Cons tag (map showValue args))) }
---   ; LamV   _ -> "<lambda>"
---   ; ThkV env tm -> showValue (eval env tm)
---   }
--- 
--- eqValue :: Value -> Value -> Bool
--- eqValue val1 val2 = case val1 of
---   { IntV i1 -> case val2 of { IntV i2 ->  eq i1 i2 ; ThkV e2 t2 -> eqValue val1 (eval e2 t2) ; _ -> False }
---   ; ChrV c1 -> case val2 of { ChrV c2 -> ceq c1 c2 ; ThkV e2 t2 -> eqValue val1 (eval e2 t2) ; _ -> False }
---   ; ConV con1 args1 -> case val2 of
---       { ConV con2 args2 -> and3 (eq con1 con2) (eq (length args1) (length args2))
---                                 (andList (zipWith eqValue args1 args2))
---       ; ThkV env2 tm2   -> eqValue val1 (eval env2 tm2)
---       ; _ -> False }
---   ; LamV _        -> False
---   ; ThkV env1 tm1 -> eqValue (eval env1 tm1) val2
---   }
+showValue :: Value -> String
+showValue value = case value of
+  { IntV n -> showInt n
+  ; ChrV c -> quoteChar c
+  ; ConV con args -> let { tag = appendInt "Con#" con } in case args of { Nil -> tag
+    ; Cons _ _ -> parenString (unwords (Cons tag (map showValue args))) }
+  ; LamV   _ -> "<lambda>"
+  ; ThkV env tm -> showValue (eval env tm)
+  }
+
+printValue :: Value -> IO Unit
+printValue x = putStrLn (showValue x)
+
+eqValue :: Value -> Value -> Bool
+eqValue val1 val2 = case val1 of
+  { IntV i1 -> case val2 of { IntV i2 ->  eq i1 i2 ; ThkV e2 t2 -> eqValue val1 (eval e2 t2) ; _ -> False }
+  ; ChrV c1 -> case val2 of { ChrV c2 -> ceq c1 c2 ; ThkV e2 t2 -> eqValue val1 (eval e2 t2) ; _ -> False }
+  ; ConV con1 args1 -> case val2 of
+      { ConV con2 args2 -> and3 (eq con1 con2) (eq (length args1) (length args2))
+                                (andList (zipWith eqValue args1 args2))
+      ; ThkV env2 tm2   -> eqValue val1 (eval env2 tm2)
+      ; _ -> False }
+  ; LamV _        -> False
+  ; ThkV env1 tm1 -> eqValue (eval env1 tm1) val2
+  }
 
 boolToValue :: Bool -> Value
 boolToValue b = ifte b (ConV con_True Nil) (ConV con_False Nil)
@@ -116,6 +119,12 @@ valueToString = compose (map valueToChar) valueToList
 maybeStringToValue :: Maybe String -> Value
 maybeStringToValue mb = case mb of { Nothing -> ConV con_Nothing Nil ; Just s -> ConV con_Just (singleton (stringToValue s)) }
 
+literalToValue :: Literal -> Value
+literalToValue lit = case lit of
+  { IntL k       -> IntV k
+  ; ChrL c       -> ChrV c
+  ; StrL s       -> stringToValue s }
+
 --------------------------------------------------------------------------------
 -- ** Evaluating primops
 
@@ -159,8 +168,8 @@ evalPrim prim args = case prim of
   ; GetChar -> unary   args (compose3 maybeCharToValue   (\u -> getChar# u) valueToUnit)
   ; PutChar -> unary   args (compose3 unitToValue        (\c -> putChar# c) valueToChar)
   ; Exit    -> unary   args (compose3 unitToValue        (\k -> exit#    k) valueToInt )
-  ; GetArg  -> unary   args (compose3 maybeStringToValue (\n -> getArg#  n) valueToInt ) 
-  ; _       -> error "evalPrim: unimplemented primop"
+  ; GetArg  -> unary   args (compose3 maybeStringToValue (\n -> getArg# (inc2 n)) valueToInt) 
+  ; _       -> error (append "evalPrim: unimplemented primop: " (quoteString (showPrim prim)))
   }
 --  ; GenEQ   -> binary  args (\x y -> boolToValue (eqValue x y))
 --  ; IFTE    -> error "ifte: this has to be implemented somewhere else because of lazyness"
@@ -168,58 +177,73 @@ evalPrim prim args = case prim of
 --  ; Or      -> binary  args (evalfunBBB or  )
 
 --------------------------------------------------------------------------------
+
+lazyIFTE :: Env -> Term -> Term -> Term -> Value
+lazyIFTE env tb tx ty = let { vb = eval env tb } in ifte (valueToBool vb) (eval env tx) (eval env ty)
+
+lazyAnd :: Env -> Term -> Term -> Value
+lazyAnd env t1 t2 = let { v1 = eval env t1 } in ifte (valueToBool v1) (eval env t2) (boolToValue False)
+
+lazyOr :: Env -> Term -> Term -> Value
+lazyOr env t1 t2 = let { v1 = eval env t1 } in ifte (valueToBool v1) (boolToValue True) (eval env t2)
+
+--------------------------------------------------------------------------------
 -- ** The evaluator
 
--- in reverse order as usual
-type Env = List Value
+-- | The first component is the top level scope, in normal order; 
+-- the second one is the environment in reverse order; third is the list of
+-- string constants
+data Env = Env (List Term) (List Value) (List String)
 
--- evalVar :: Env -> Idx -> Value
--- evalVar env idx = forceValue (index idx env)
--- 
--- eval :: Env -> Term -> Value
--- eval env term = case term of
---   { VarT idx     -> evalVar env (forgetName idx)
---   ; ConT con     -> ConV (forgetName con) Nil
---   ; AppT e1 a2   -> case eval env e1 of
---     { LamV fun      -> fun                 (evalVar env (forgetName a2))
---     ; ConV con args -> ConV con (snoc args (evalVar env (forgetName a2)))
---     ; _             -> error "application to non-lambda (int/char)" }
---   ; PriT primop vs -> case primop of { PrimOp _arity prim -> evalPrim prim (map (evalVar env) vs) }
---   ; LZPT primop ts -> case primop of { PrimOp _arity prim -> case prim of
---     { IFTE -> ternary ts (lazyIFTE env)
---     ; And  -> binary  ts (lazyAnd  env)
---     ; Or   -> binary  ts (lazyOr   env)
---     ; _    -> error "unrecognized lazy primop" }}
---   ; LamT body    -> LamV (\x -> eval (Cons x env) (forgetName body))
---   ; CasT var brs -> case forceValue (index var env) of
---     { ConV con args -> matchCon env con args brs
---     ; _             -> error "branching on a non-constructor (lambda)" }
---   ; RecT n ls tm -> let { env' = append (reverse (map (mkThunk env') ls)) env } in eval env' tm
---   ; KstT lit     -> case lit of
---     { IntL k       -> IntV k
---     ; ChrL c       -> ChrV c
---     ; StrL _       -> error "string literals should not appear in core" }
---   } 
---   where { mkThunk env1 named = case named of { Named name body -> ThkV env1 body } }
--- 
--- lazyIFTE :: Env -> Term -> Term -> Term -> Value
--- lazyIFTE env tb tx ty = let { vb = eval env tb } in ifte (valueToBool vb) (eval env tx) (eval env ty)
--- 
--- lazyAnd :: Env -> Term -> Term -> Value
--- lazyAnd env t1 t2 = let { v1 = eval env t1 } in ifte (valueToBool v1) (eval env t2) (boolToValue False)
--- 
--- lazyOr :: Env -> Term -> Term -> Value
--- lazyOr env t1 t2 = let { v1 = eval env t1 } in ifte (valueToBool v1) (boolToValue True) (eval env t2)
--- 
--- matchCon :: Env -> Con -> List Value -> List BranchT -> Value
--- matchCon env con args = go where
---   { nargs = length args
---   ; go branches = case branches of
---     { Nil -> error "non-exhaustive patterns in case"
---     ; Cons this rest -> case this of
---       { DefaultT rhs            -> eval env rhs
---       ; BranchT bcon bnargs rhs -> ifte (and (eq con (forgetName bcon)) (eq nargs bnargs))
---           (eval (append (reverse args) env) rhs)
---           (go rest) } } }
+pushEnv1 :: Value -> Env -> Env
+pushEnv1 value env = case env of { Env toplevs stack strlits -> Env toplevs (Cons value stack) strlits }
+
+pushEnvMany :: List Value -> Env -> Env
+pushEnvMany values env = case env of { Env toplevs stack strlits -> Env toplevs (reverseAppend values stack) strlits }
+
+evalVar :: Env -> Var -> Value
+evalVar env var = case env of { Env toplevs stack strlits -> case var of
+  IdxV idx -> forceValue    (index idx stack  )
+  TopV top -> forceValue    (ThkV (Env toplevs Nil strlits) (index top toplevs))
+  StrV k   -> stringToValue (index k   strlits) }
+
+evalAtom :: Env -> Atom -> Value
+evalAtom env atom = case atom of 
+  VarA var -> evalVar env (forgetName var)
+  KstA lit -> literalToValue lit
+  ConA con -> ConV (forgetName con) Nil
+
+eval :: Env -> Term -> Value
+eval env term = case term of
+  { AtmT atom    -> evalAtom env atom
+  ; AppT e1 a2   -> case eval env e1 of
+    { LamV fun      -> fun                 (evalAtom env a2)
+    ; ConV con args -> ConV con (snoc args (evalAtom env a2))
+    ; _             -> error "eval: application to non-lambda" }
+  ; PriT primop vs -> case primop of { PrimOp _arity prim -> evalPrim prim (map (evalAtom env) vs) }
+  ; LZPT primop ts -> case primop of { PrimOp _arity prim -> case prim of
+    { IFTE -> ternary ts (lazyIFTE env)
+    ; And  -> binary  ts (lazyAnd  env)
+    ; Or   -> binary  ts (lazyOr   env)
+    ; _    -> error "eval: unrecognized lazy primop" }}
+  ; LetT t1 t2    -> eval (pushEnv1 (eval env t1) env) t2
+  ; LamT body     -> LamV (\x -> eval (pushEnv1 x env) (forgetName body))
+  ; CasT atom brs -> case evalAtom env atom of
+    { ConV con args -> matchCon env con args brs
+    ; _             -> error "eval: branching on a non-constructor" }
+  ; RecT n ls tm -> let { env' = pushEnvMany (map (mkThunk env') ls) env } in eval env' tm
+  } 
+  where { mkThunk env1 named = case named of { Named name body -> ThkV env1 body } }
+
+matchCon :: Env -> Con -> List Value -> List BranchT -> Value
+matchCon env con args = go where
+  { nargs = length args
+  ; go branches = case branches of
+    { Nil -> error "non-exhaustive patterns in case"
+    ; Cons this rest -> case this of
+      { DefaultT rhs            -> eval env rhs
+      ; BranchT bcon bnargs rhs -> ifte (and (eq con (forgetName bcon)) (eq nargs bnargs))
+          (eval (pushEnvMany args env) rhs)
+          (go rest) } } }
 
 --------------------------------------------------------------------------------
