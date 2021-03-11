@@ -4,7 +4,7 @@
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
-{-# LANGUAGE OverloadedStrings, OverloadedLists#-}
+{-# LANGUAGE OverloadedStrings, OverloadedLists #-}
 
 module Syntax where
 
@@ -28,9 +28,9 @@ import PrimOps
 {-% include "PrimOps.hs"     %-}
 
 --------------------------------------------------------------------------------
--- ** Surface syntax
+-- * Surface syntax
 
-type DefinE  = Defin Expr
+type DefinE = Defin Expr
 
 -- | We \"parse\" (well, recognize) type declarations, data declarations,
 -- type synonyms and imports, but we ignore them; this is simply so that the
@@ -60,6 +60,7 @@ data Expr
   | AppE  Expr Expr
   | LamE  Name Expr
   | LetE  (List DefinE) Expr
+  | RecE  (List DefinE) Expr
   | CaseE Expr (List BranchE)
   | LitE  Literal
   | ListE (List Expr)
@@ -88,7 +89,7 @@ listAppsE  list = case list of { Cons f args -> appsE f args ; Nil -> error "lis
 --------------------------------------------------------------------------------
 -- ** TODO: Pattern compiler 
 
--- SimP  = simple pattern
+-- SimP  = simple pattern (we compile down to this)
 -- AppP  = constructor pattern
 -- VarP  = variable pattern
 -- WildP = wildcard patterns
@@ -112,7 +113,34 @@ patternHead pat = case pat of
 -- patternCompiler
 
 --------------------------------------------------------------------------------
--- ** Recognize PrimOps
+-- ** free and bound variables
+
+-- | Free variables in an expression
+freeVars :: Expr -> TrieSet
+freeVars expr = go trieEmpty expr where
+  { go bound expr = case expr of
+    { VarE nam       -> case trieMember nam bound of { False -> trieSetSingleton nam ; _ -> trieEmpty }
+    ; AppE e1 e2     -> trieUnion (go bound e1) (go bound e2)
+    ; LamE v body    -> go (trieSetInsert v bound) body
+    ; LetE defs body -> goLets   bound defs body
+    ; RecE defs body -> goLetRec bound defs body
+    ; CaseE what brs -> trieUnion (go bound what) (trieUnions (map (goBranch bound) brs))
+    ; LitE  _        -> trieEmpty
+    ; ListE list     -> trieUnions (map (go bound) list)
+    ; PrimE p list   -> trieUnions (map (go bound) list)
+    ; StrE  _        -> trieEmpty }
+  ; goBranch bound branch = case branch of
+    { DefaultE rhs     -> go bound rhs 
+    ; BranchE _ ns rhs -> let { bound' = trieUnion (trieSetFromList ns) bound } in go bound' rhs }
+  ; goLets bound defs body = case defs of { Nil -> go bound body ; Cons def rest -> case def of { Defin nam rhs ->
+      let { bound' = trieSetInsert nam bound } in trieUnion (go bound rhs) (goLets bound' rest body) } }
+  ; goLetRec bound defs body = let 
+      { bound' = trieUnion (trieSetFromList (map definedName defs)) bound 
+      ; stuff = map (\defin -> go bound' (definedWhat defin)) defs
+      } in trieUnion (trieUnions stuff) (go bound' body) }
+
+--------------------------------------------------------------------------------
+-- ** recognize PrimOps
 
 -- | From @((f x) y) z@ we create the list [f,x,y,z]
 recogAppsE :: Expr -> List Expr
@@ -153,6 +181,7 @@ recogPrimApps1 = go where
           ; _            -> appsE (go    f) (map go args) } }
       ; LamE arg  body -> LamE  arg  (go body)
       ; LetE defs body -> LetE  (map goDefin defs) (go body)
+      ; RecE defs body -> RecE  (map goDefin defs) (go body)
       ; CaseE what brs -> CaseE (go what) (map goBranch brs)
       ; ListE exprs    -> ListE (map go exprs)
       ; _              -> expr }
@@ -185,6 +214,7 @@ extractStringConstants1 expr = go expr where
     ; AppE  e1 e2    -> sliftA2 AppE (go e1) (go e2)
     ; LamE  n body   -> sfmap  (LamE n) (go body)
     ; LetE  defs rhs -> sliftA2 LetE  (smapM goDefin defs) (go rhs)
+    ; RecE  defs rhs -> sliftA2 RecE  (smapM goDefin defs) (go rhs)
     ; CaseE what brs -> sliftA2 CaseE (go what) (smapM goBranch brs)
     ; ListE ls       -> sfmap   ListE (smapM go ls)
     ; PrimE pri args -> sfmap  (PrimE pri) (smapM go args) }

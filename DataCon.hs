@@ -4,7 +4,7 @@
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
-{-# LANGUAGE OverloadedStrings, OverloadedLists#-}
+{-# LANGUAGE OverloadedStrings, OverloadedLists #-}
 
 module DataCon where
 
@@ -94,15 +94,16 @@ collectDataConsWorker expr = go expr where
     ; StrE k    -> sreturn Unit
     ; AppE e1 e2  -> sseq (go e1) (go e2)
     ; LamE _ body -> go body
-    ; LetE defs body -> sseq
-        (smapM_ (\defin -> case defin of { Defin _ rhs -> go rhs }) defs )
-        (go body)
+    ; LetE defs body -> goLet defs body
+    ; RecE defs body -> goLet defs body
     ; CaseE e branches -> sseq (go e) (smapM_ (\br -> case br of
         { BranchE con _ rhs -> sbind (insert con) (\_ -> go rhs)
         ; DefaultE      rhs -> go rhs }) branches)
     ; LitE _     -> sreturn Unit
     ; ListE list -> smapM_ go list
     ; PrimE _ as -> smapM_ go as
-    } }
+    } 
+  ; goLet defs body = sseq 
+      (smapM_ (\defin -> case defin of { Defin _ rhs -> go rhs }) defs ) (go body) }
 
 --------------------------------------------------------------------------------

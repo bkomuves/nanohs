@@ -4,7 +4,7 @@
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
-{-# LANGUAGE OverloadedStrings, OverloadedLists#-}
+{-# LANGUAGE OverloadedStrings, OverloadedLists #-}
 
 module Parser where
 
@@ -336,7 +336,7 @@ filterWhite :: Block -> Block
 filterWhite = filter cond where { cond ltok = isNotWhite (located ltok) }
 
 keywords :: List String
-keywords = [ "where" , "case" , "of" , "let" , "in" , "module" , "import" , "include" , "data" , "type" ]
+keywords = [ "where" , "case" , "of" , "let" , "let_" , "in" , "module" , "import" , "include" , "data" , "type" ]
 
 isKeyword :: String -> Bool
 isKeyword str = elem str keywords
@@ -388,7 +388,7 @@ definP = pbind varP              (\name ->
 exprP :: Parse Expr
 exprP = pbind nakedExprP             (\expr ->
         pbind (optional whereBlockP) (\mb   ->
-        preturn (case mb of { Nothing -> expr ; Just defs -> LetE defs expr } )))
+        preturn (case mb of { Nothing -> expr ; Just defs -> RecE defs expr } )))
 
 whereBlockP :: Parse (List DefinE)
 whereBlockP = pbind (keywordP "where") (\_ -> blockP)
@@ -408,7 +408,7 @@ atomP what = choice
   , pfmap LitE  literalP
   , pfmap ListE listExprP
   , caseExprP
-  , letExprP
+  , letsExprP , letRecExprP
   , pfmap VarE varP
   ] what
 
@@ -482,11 +482,19 @@ lamExprP =
   pbind (specP Arrow ) (\_    ->
   pbind exprP          (\body -> preturn (lamsE args body)))))
 
-letExprP :: Parse Expr
-letExprP = pbind (keywordP "let") (\_    ->
-           pbind (blockP        ) (\defs ->
-           pbind (keywordP "in" ) (\_    ->
-           pbind (exprP         ) (\expr -> preturn (LetE defs expr)))))
+letExprP' :: (List DefinE -> Expr -> Expr) -> String -> Parse Expr
+letExprP' con letkw = pbind (keywordP letkw) (\_    ->
+                  pbind (blockP        ) (\defs ->
+                  pbind (keywordP "in" ) (\_    ->
+                  pbind (exprP         ) (\expr -> preturn (con defs expr)))))
+
+-- | Non-recursive let
+letsExprP :: Parse Expr
+letsExprP = letExprP' LetE "let_"
+
+-- | Recursive let
+letRecExprP :: Parse Expr
+letRecExprP = letExprP' RecE "let"
 
 caseExprP :: Parse Expr
 caseExprP = pbind (keywordP "case") (\_    ->

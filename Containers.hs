@@ -3,7 +3,7 @@
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
-{-# LANGUAGE OverloadedStrings, OverloadedLists#-}
+{-# LANGUAGE OverloadedStrings, OverloadedLists #-}
 
 module Containers where
 
@@ -114,6 +114,9 @@ trieLookup str trie = case trie of { Node mb table -> case str of { Nil -> mb
   ; Cons x xs -> case mapLookup (ord x) table of { Nothing -> Nothing
     ; Just trie' -> trieLookup xs trie' } } }
 
+trieMember :: String -> Trie a -> Bool
+trieMember str trie = isJust (trieLookup str trie)
+
 trieInsert :: String -> a -> Trie a -> Trie a
 trieInsert string y = go string where
   { go str trie = case trie of { Node mb table -> case str of
@@ -132,6 +135,15 @@ trieDelete str trie = case trie of { Node mb table -> case str of
   { Nil -> Node Nothing table
   ; Cons x xs -> Node mb (mapAdjust (ord x) (trieDelete xs) table) } }
 
+trieUnion :: Trie a -> Trie a -> Trie a
+trieUnion trie1 trie2 = go trie2 (trieToList trie1) where
+  { go trie list = case list of { Nil -> trie ; Cons pair rest -> case pair of { Pair key val ->
+      go (trieInsert key val trie) rest }}}
+
+trieUnions :: List (Trie a) -> Trie a 
+trieUnions list = case list of { Nil -> trieEmpty ; Cons this rest -> case rest of 
+  { Nil -> this ; _ -> trieUnion this (trieUnions rest) }}
+
 trieFromList :: List (Pair String a) -> Trie a
 trieFromList = foldr f trieEmpty where { f kv trie = case kv of { Pair k v -> trieInsert k v trie } }
 
@@ -145,5 +157,22 @@ trieToList = go where { go trie = case trie of { Node mb table -> let
   ; rest = concat (map f table)
   ; prepend x pair = case pair of { Pair xs y -> Pair (Cons x xs) y } }
   in case mb of { Nothing -> rest ; Just y -> Cons (Pair Nil y) rest } } }
+
+--------------------------------------------------------------------------------
+-- ** Sets of strings
+
+type TrieSet = Trie Unit
+
+trieSetSingleton :: String -> TrieSet
+trieSetSingleton key = trieSingleton key Unit
+
+trieSetInsert :: String -> TrieSet -> TrieSet
+trieSetInsert key set = trieInsert key Unit set
+
+trieSetFromList :: List String -> TrieSet
+trieSetFromList list = trieFromList (map (\k -> Pair k Unit) list)
+
+trieSetToList :: TrieSet -> List String
+trieSetToList set = map fst (trieToList set)
 
 --------------------------------------------------------------------------------

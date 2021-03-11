@@ -4,7 +4,7 @@
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
-{-# LANGUAGE OverloadedStrings, OverloadedLists#-}
+{-# LANGUAGE OverloadedStrings, OverloadedLists #-}
 
 module Core where
 

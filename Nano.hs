@@ -5,7 +5,7 @@
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
-{-# LANGUAGE OverloadedStrings, OverloadedLists#-}
+{-# LANGUAGE OverloadedStrings, OverloadedLists #-}
 
 module Nano where
 
@@ -177,7 +177,10 @@ scopeCheck dcontable = go 0 where
         { Just atom -> AppT (go level scope e1) atom
         ; Nothing   -> LetT (go level scope e2) (AppT (go (inc level) scope e1) (VarA (Named "letx" (IdxV 0)))) }
     ; LamE  name body -> LamT (Named name (go (inc level) (trieInsert name (LevL level) scope) body))
-    ; LetE  defs body -> let { n = length defs ; level' = plus level n
+    ; LetE  defs body -> case defs of { Nil -> go level scope body ; Cons defin rest -> case defin of 
+        { Defin name rhs -> let { tm = go level scope rhs ; scope' = trieInsert name (LevL level) scope }
+                            in  LetT tm (go (inc level) scope' (LetE rest body)) } }
+    ; RecE  defs body -> let { n = length defs ; level' = plus level n
         ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name (LevL j) scp }
         ; scope' = foldl f scope (zip (map definedName defs) (rangeFrom level n))
         } in RecT n (map (goDefin level' scope') defs) (go level' scope' body)
