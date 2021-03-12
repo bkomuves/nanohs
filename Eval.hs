@@ -203,15 +203,15 @@ pushEnvMany values env = case env of { Env toplevs stack strlits -> Env toplevs 
 
 evalVar :: Env -> Var -> Value
 evalVar env var = case env of { Env toplevs stack strlits -> case var of
-  IdxV idx -> forceValue    (index idx stack  )
-  TopV top -> forceValue    (ThkV (Env toplevs Nil strlits) (index top toplevs))
-  StrV k   -> stringToValue (index k   strlits) }
+  { IdxV idx -> forceValue    (index idx stack  )
+  ; TopV top -> forceValue    (ThkV (Env toplevs Nil strlits) (index top toplevs))
+  ; StrV k   -> stringToValue (index k   strlits) } }
 
 evalAtom :: Env -> Atom -> Value
 evalAtom env atom = case atom of 
-  VarA var -> evalVar env (forgetName var)
-  KstA lit -> literalToValue lit
-  ConA con -> ConV (forgetName con) Nil
+  { VarA var -> evalVar env (forgetName var)
+  ; KstA lit -> literalToValue lit
+  ; ConA con -> ConV (forgetName con) Nil }
 
 eval :: Env -> Term -> Value
 eval env term = case term of
