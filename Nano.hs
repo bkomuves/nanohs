@@ -72,7 +72,7 @@ runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case pr
     ioseq (putStrLn "compiling...") (let
       { lprogram = coreProgramToLifted coreprg
       ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
-      } in writeFile outputFn (unlines code) )})
+      } in writeLines outputFn code )})
 
 runInterpreter :: FilePath -> IO Unit
 runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
@@ -528,9 +528,10 @@ makeStaticFunctionTables toplevs = sseq ptrs arities where
 makeDataConTable :: DataConTable -> CodeGenM_
 makeDataConTable trie = let { list = mapFromList (map swap (trieToList trie)) } in ssequence_
   [ addLines [ "char *datacon_table[] = " ]
-  , sforM_ (zipFirstRest ("  { ") ("  , ") list) (\pair -> 
-      case pair of { Pair prefix pair2 -> case pair2 of { Pair idx name ->
-        addWords [ prefix , doubleQuoteString name , "   // " , showInt idx ] }})
+  , case list of { Nil -> addLine "  {" ; _ ->
+      sforM_ (zipFirstRest ("  { ") ("  , ") list) (\pair -> 
+        case pair of { Pair prefix pair2 -> case pair2 of { Pair idx name ->
+          addWords [ prefix , doubleQuoteString name , "   // " , showInt idx ] }}) }
   , addLines [ "  };" ] ]
 
 type StringLitTable = List String
@@ -538,8 +539,9 @@ type StringLitTable = List String
 makeStringLitTable :: StringLitTable -> CodeGenM_
 makeStringLitTable list = ssequence_
   [ addLines [ "char *string_table[] = " ]
-  , sforM_ (zipFirstRest ("  { ") ("  , ") list) (\pair -> 
-      case pair of { Pair prefix str -> addWords [ prefix , doubleQuoteString str ] })
+  , case list of { Nil -> addLine "  {" ; _ ->
+      sforM_ (zipFirstRest ("  { ") ("  , ") list) (\pair -> 
+        case pair of { Pair prefix str -> addWords [ prefix , doubleQuoteString str ] }) }
   , addLines [ "  };" ] ]
 
 liftedProgramToCode :: FilePath -> StringLitTable -> DataConTable -> LiftedProgram -> CodeGenM_

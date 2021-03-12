@@ -5,15 +5,18 @@
 
 #define MAX(a,b)   (((a)>=(b))?(a):(b))
 
-#define STACK_SIZE   (   1024*1024)
-#define HEAP_SIZE    (16*1024*1024)
+#define STACK_SIZE   (  1024*1024)
+#define HEAP_SIZE    (8*1024*1024)
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
-// typedef heap_ptr *stack_ptr;
 
 heap_ptr  HP, Heap_begin , Heap_end;
 stack_ptr SP, Stack_begin, Stack_end;
+
+// c stack debugging
+uint64_t rsp_begin, rsp_last;
+register uint64_t rsp asm ("rsp");
 
 uint64_t Last_compacted_heap_size;
 
@@ -204,6 +207,13 @@ heap_ptr rts_heap_allocate(int size) {
 }
 
 stack_ptr rts_stack_allocate(int size) {
+
+  int k = rsp_last - rsp;
+  if (k >= 1024*1024) {
+    rsp_last = rsp;
+    printf("c stack size = %llu\n" , rsp_begin - rsp);
+  }
+
   stack_ptr loc = SP;
   SP += size;
   if (SP >= Stack_end) rts_internal_error("stack overflow");
@@ -534,6 +544,9 @@ void rts_initialize(int argc, char **argv) {
   ArgCount  = argc;
   ArgVector = argv;
 
+  rsp_begin = rsp;
+  rsp_last  = rsp_begin;
+
   // at the moment we allocate a closure (2 words) for each static function
   // which is stupid, whatever...
   int heap_size = MAX( HEAP_SIZE , 128 + 2*NStatic );
@@ -610,32 +623,32 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 
 // -----------------------------------------------------------------------------
 
-// runIO :: IO a -> a
-heap_ptr prim_RunIO(heap_ptr funobj) {
-  // recall that "type IO a = (Unit -> a)"
-  stack_ptr loc = rts_stack_allocate(1);
-  loc[0] = (uint64_t) UNIT;
-  return rts_apply( funobj , 1 );
-}  
-
 // // runIO :: IO a -> a
-// heap_ptr prim_RunIO(heap_ptr arg) {
-//   printf("[rts version = C99]\n");
-//   // recall that "data IO a = IO (Unit -> a)"
-//   heap_ptr ptr = rts_force_value(arg);
-//   if( IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_IO,1)) ) {
-//     heap_ptr funobj = (heap_ptr) ptr[1];
-//     stack_ptr loc = rts_stack_allocate(1);
-//     loc[0] = (uint64_t) UNIT;
-//     return rts_apply( funobj , 1 );
-//   }  
-//   else {
-//     fprintf(stderr,"PROBLEM:\n");
-//     rts_generic_println(arg); 
-//     rts_internal_error("runIO: argument is not an IO action");
-//     return UNIT;
-//   }
-// }
+// heap_ptr prim_RunIO(heap_ptr funobj) {
+//   // recall that "type IO a = (Unit -> a)"
+//   stack_ptr loc = rts_stack_allocate(1);
+//   loc[0] = (uint64_t) UNIT;
+//   return rts_apply( funobj , 1 );
+// }  
+
+// runIO :: IO a -> a
+heap_ptr prim_RunIO(heap_ptr arg) {
+  printf("[rts version = C99]\n");
+  // recall that "data IO a = IO (Unit -> a)"
+  heap_ptr ptr = rts_force_value(arg);
+  if( IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_IO,1)) ) {
+    heap_ptr funobj = (heap_ptr) ptr[1];
+    stack_ptr loc = rts_stack_allocate(1);
+    loc[0] = (uint64_t) UNIT;
+    return rts_apply( funobj , 1 );
+  }  
+  else {
+    fprintf(stderr,"PROBLEM:\n");
+    rts_generic_println(arg); 
+    rts_internal_error("runIO: argument is not an IO action");
+    return UNIT;
+  }
+}
 
 // -----------------------------------------------------------------------------
 
@@ -742,6 +755,14 @@ heap_ptr prim_HGetChar(heap_ptr harg) {
 // hPutChar# :: Handle -> Char -> Unit
 heap_ptr prim_HPutChar(heap_ptr harg, heap_ptr carg) {
   fputc( TO_INT(carg) , TO_FILE(harg) );
+  return UNIT;
+}
+
+// hPutStr# :: Handle -> String -> Unit
+heap_ptr prim_HPutStr(heap_ptr harg, heap_ptr sarg) {
+  char *cstr;
+  rts_marshal_to_cstring( 1024 , cstr, sarg );
+  fputs( cstr , TO_FILE(harg) );
   return UNIT;
 }
 

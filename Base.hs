@@ -431,19 +431,19 @@ lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newline
 -- type IO a = (Unit -> a)
 
 ioreturn :: a -> IO a
-ioreturn x = (\_ -> x)
+ioreturn x = IO (\_ -> x)
 
 ioret_ :: IO Unit
-ioret_ = (\_ -> Unit)
+ioret_ = IO (\_ -> Unit)
 
 -- | Note: we have to be very careful about how to implement bind!
 -- (because we are cheating with ML-style IO)
 iobind :: IO a -> (a -> IO b) -> IO b
--- iobind action u = case action of { IO f -> IO (\q -> case u (f Unit) of { IO g -> g q } ) }
-iobind action u _ = u (action Unit) Unit
+iobind action u = case action of { IO f -> IO (\q -> case u (f Unit) of { IO g -> g q } ) }
+-- iobind action u _ = u (action Unit) Unit
 
 ioerror :: String -> IO a
-ioerror msg = (\_ -> error msg)
+ioerror msg = IO (\_ -> error msg)
 
 ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
 ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
@@ -467,19 +467,19 @@ ioforM_ :: List a -> (a -> IO b) -> IO Unit
 ioforM_ list f = iomapM_ f list
 
 getChar :: IO (Maybe Char)
-getChar = (\u -> getChar# u)
+getChar = IO (\u -> getChar# u)
 
 putChar :: Char -> IO Unit
-putChar c = (\_ -> putChar# c)
+putChar c = IO (\_ -> putChar# c)
 
 exit :: Int -> IO Unit
-exit k = (\_ -> exit# k)
+exit k = IO (\_ -> exit# k)
 
 print :: Show a => a -> IO Unit
-print what = (\_ -> print# what)
+print what = IO (\_ -> print# what)
 
 getArg :: Int -> IO (Maybe String)
-getArg i = (\_ -> getArg# i)
+getArg i = IO (\_ -> getArg# i)
 
 getArgs :: IO (List String)
 getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
@@ -495,16 +495,16 @@ putStrLn str = ioseq (putStr str) (putChar (chr 10))
 type FilePath = String
 
 openFile :: FilePath -> IOMode -> IO Handle
-openFile fn mode = (\_ -> openFile# fn mode)
+openFile fn mode = IO (\_ -> openFile# fn mode)
 
 hClose :: Handle -> IO Unit
-hClose h = (\_ -> hClose# h)
+hClose h = IO (\_ -> hClose# h)
 
 hGetChar :: Handle -> IO (Maybe Char)
-hGetChar h = (\_ -> hGetChar# h)
+hGetChar h = IO (\_ -> hGetChar# h)
 
 hPutChar :: Handle -> Char -> IO Unit
-hPutChar h c = (\_ -> hPutChar# h c)
+hPutChar h c = IO (\_ -> hPutChar# h c)
 
 hGetContents :: Handle -> IO String
 hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
@@ -512,7 +512,8 @@ hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of
   ; Just y  -> iobind go (\ys -> ioreturn (Cons y ys)) }) }
 
 hPutStr :: Handle -> String -> IO Unit
-hPutStr h = go where { go xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (hPutChar h y) (go ys) } }
+hPutStr h s = IO (\_ -> hPutStr# h s)
+-- hPutStr h = go where { go xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (hPutChar h y) (go ys) } }
 
 hPutStrLn :: Handle -> String -> IO Unit
 hPutStrLn h str = ioseq (hPutStr h str) (hPutChar h (chr 10)) 
@@ -528,6 +529,9 @@ readFile fn = withFile fn ReadMode hGetContents
 
 writeFile :: FilePath -> String -> IO Unit
 writeFile fn text = withFile fn WriteMode (\h -> hPutStr h text)
+
+writeLines :: FilePath -> List String -> IO Unit
+writeLines fn ls = withFile fn WriteMode (\h -> iomapM_ (hPutStrLn h) ls)
 
 --------------------------------------------------------------------------------
 -- ** State monad

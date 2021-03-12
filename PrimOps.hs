@@ -29,7 +29,7 @@ data Prim
   | BitAnd | BitOr | BitXor | ShiftL | ShiftR
   | IFTE | Not | And | Or | GenEQ | IntEQ | IntLT | IntLE
   | GetChar | PutChar | GetArg | Exit | Error | RunIO | Print
-  | OpenFile | HClose | HGetChar | HPutChar | StdIn | StdOut | StdErr
+  | OpenFile | HClose | HGetChar | HPutChar | HPutStr | StdIn | StdOut | StdErr
   deriving (Eq,Show)
 
 isLazyPrim :: Prim -> Bool
@@ -52,7 +52,7 @@ showPrim prim = case prim of
   ; GetChar  -> "GetChar"  ; PutChar  -> "PutChar"  ; GetArg  -> "GetArg" 
   ; StdIn    -> "StdIn"    ; StdOut   -> "StdOut"   ; StdErr  -> "StdErr" 
   ; HGetChar -> "HGetChar" ; HPutChar -> "HPutChar" ; HClose  -> "HClose" 
-  ; OpenFile -> "OpenFile" ; RunIO    -> "RunIO"    }
+  ; OpenFile -> "OpenFile" ; HPutStr  -> "HPutStr"  ; RunIO   -> "RunIO"    }
 
 data PrimOp = PrimOp Arity Prim deriving Show
 
@@ -88,6 +88,7 @@ primops = trieFromList
   , Pair "hClose#"   (PrimOp 1  HClose  )
   , Pair "hGetChar#" (PrimOp 1  HGetChar)
   , Pair "hPutChar#" (PrimOp 2  HPutChar)
+  , Pair "hPutStr#"  (PrimOp 2  HPutStr )
   , Pair "stdin"     (PrimOp 0  StdIn   )
   , Pair "stdout"    (PrimOp 0  StdOut  )
   , Pair "stderr"    (PrimOp 0  StdErr  )

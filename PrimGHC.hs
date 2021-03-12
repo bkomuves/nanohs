@@ -41,18 +41,13 @@ data Maybe a = Nothing | Just a deriving Show
 
 type Handle = IO.Handle
 
-type IO a = (Unit -> a)
+newtype IO a = IO (Unit -> a)
 
+{-# NOINLINE runIO# #-}
 runIO# :: IO a -> IO.IO a
-runIO# (f) = do
+runIO# (IO f) = do
   Prelude.putStrLn "[rts version = GHC]"
   case f Unit of { y -> Prelude.return y }
-
--- _GhcUnit :: ()
--- _GhcUnit = ()
-
--- _GhcReturnUnit :: Prelude.IO ()
--- _GhcReturnUnit = Prelude.return ()
 
 --------------------------------------------------------------------------------
 -- * Built-ins \/ primops
@@ -201,6 +196,10 @@ hGetChar# h = Unsafe.unsafePerformIO (Exc.catch just handler) where
 {-# NOINLINE hPutChar# #-}
 hPutChar# :: Handle -> Char -> Unit
 hPutChar# h c = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutChar h c) (Prelude.return Unit) )
+
+{-# NOINLINE hPutStr# #-}
+hPutStr# :: Handle -> String -> Unit
+hPutStr# h s = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutStr h (_toGhcString s)) (Prelude.return Unit) )
 
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types
