@@ -217,6 +217,9 @@ index k ls = case ls of
 elem :: Eq a => a -> List a -> Bool
 elem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (geq x y) True (go ys) } }
 
+charElem :: Char -> List Char -> Bool
+charElem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (ceq x y) True (go ys) } }
+
 foldl :: (a -> b -> a) -> (a -> List b -> a)
 foldl f x0 list = go x0 list where
   { go x ls = case ls of { Nil -> x ; Cons y ys -> go (f x y) ys }
@@ -231,10 +234,10 @@ foldr :: (b -> a -> a) -> (a -> List b -> a)
 foldr f x list = flipFoldr f list x
 
 sum :: List Int -> Int
-sum = foldl plus 0
+sum ns = foldl plus 0 ns
 
 reverse :: List a -> List a
-reverse = foldl (\xs x -> Cons x xs) Nil
+reverse list = foldl (\xs x -> Cons x xs) Nil list
 
 snoc :: List a -> a -> List a
 snoc xs y = case xs of { Nil -> singleton y ; Cons z zs -> Cons z (snoc zs y) }
@@ -274,12 +277,12 @@ drop :: Int -> List a -> List a
 drop n ls = case ls of { Nil -> Nil ; Cons x xs -> ifte (eq n 0) ls (drop (dec n) xs) }
 
 takeWhile :: (a -> Bool) -> List a -> List a
-takeWhile cond = go where
+takeWhile cond list = go list where
   { go ls = case ls of { Nil -> Nil ; Cons x xs -> case cond x of
     { True -> Cons x (go xs) ; False -> Nil } } }
 
 dropWhile :: (a -> Bool) -> List a -> List a
-dropWhile cond = go where
+dropWhile cond list = go list where
   { go ls = case ls of { Nil -> Nil ; Cons x xs -> case cond x of
     { True -> go xs ; False -> ls } } }
 
@@ -287,11 +290,11 @@ span :: (a -> Bool) -> List a -> Pair (List a) (List a)
 span cond xs = Pair (takeWhile cond xs) (dropWhile cond xs)
 
 zipWith :: (a -> b -> c) -> List a -> List b -> List c
-zipWith f = go where { go ls1 ls2 = case ls1 of { Nil -> Nil ; Cons x xs -> case ls2 of
+zipWith f as bs = go as bs where { go ls1 ls2 = case ls1 of { Nil -> Nil ; Cons x xs -> case ls2 of
   { Nil -> Nil ; Cons y ys -> Cons (f x y) (go xs ys) } } }
 
 zip :: List a -> List b -> List (Pair a b)
-zip = zipWith Pair
+zip xs ys = zipWith Pair xs ys
 
 unzip :: List (Pair a b) -> Pair (List a) (List b)
 unzip xys = case xys of { Nil -> Pair Nil Nil ; Cons this rest -> case this of
@@ -307,7 +310,7 @@ zipWithIndex f xs = zipWith f xs (range (length xs))
 
 -- | Zip with @replicate n y@
 zipConst :: b -> List a -> List (Pair b a)
-zipConst y = worker where { worker l = case l of { Nil -> Nil ; Cons x xs -> Cons (Pair y x) (worker xs) }}
+zipConst y list = worker list where { worker l = case l of { Nil -> Nil ; Cons x xs -> Cons (Pair y x) (worker xs) }}
 
 -- | Zip with @(first : repeat rest)@
 zipFirstRest :: b -> b -> List a -> List (Pair b a)
@@ -344,7 +347,7 @@ isLower_   ch = or (ceq ch '_') (isLower ch)
 -- type String = List Char
 
 stringEq :: String -> String -> Bool
-stringEq = go where { go str1 str2 = case str1 of 
+stringEq a b = go a b where { go str1 str2 = case str1 of 
   { Nil       -> case str2 of { Nil -> True  ; _ -> False }
   ; Cons x xs -> case str2 of { Nil -> False ; Cons y ys -> and (ceq x y) (go xs ys) }}}
 
@@ -394,29 +397,29 @@ backslashEn :: String
 backslashEn = [ backslashC  , 'n' ]
 
 doubleQuoteString :: String -> String
-doubleQuoteString = delimString doubleQuoteC doubleQuoteC
+doubleQuoteString str = delimString doubleQuoteC doubleQuoteC str
 
 doubleQuoteStringLn :: String -> String
 doubleQuoteStringLn str = delimString doubleQuoteC doubleQuoteC (append str backslashEn)
 
 quoteString :: String -> String
-quoteString = delimString '`' '`'
+quoteString what= delimString '`' '`' what
 
 parenString :: String -> String
-parenString = delimString '(' ')'
+parenString what = delimString '(' ')' what
 
 intercalate :: List a -> List (List a) -> List a
-intercalate sep = go where
+intercalate sep llist = go llist where
   { go xss = case xss of
     { Nil -> Nil ; Cons ys yss -> case yss of
       { Nil -> ys
       ; _   -> append ys (append sep (go yss)) } } }
 
 unwords :: List String -> String
-unwords = intercalate (Cons ' '      Nil)
+unwords list = intercalate (Cons ' ' Nil) list
 
 unlines :: List String -> String
-unlines = intercalate (Cons newlineC Nil)
+unlines list = intercalate (Cons newlineC Nil) list
 
 lines :: String -> List String
 lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newlineC) xs of

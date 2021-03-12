@@ -30,13 +30,13 @@ setEmpty :: IntSet
 setEmpty = Nil
 
 setMember :: Int -> IntSet -> Bool
-setMember = elem
+setMember k set = elem k set
 
 setSingleton :: Int -> IntSet
 setSingleton x = Cons x Nil
 
 setInsert :: Int -> IntSet -> IntSet
-setInsert k = go where
+setInsert k set = go set where
   { go set = case set of { Nil -> Cons k Nil ; Cons x xs -> case compare k x of
     { LT -> Cons k set ; EQ -> set ; GT -> Cons x (go xs) } } }
 
@@ -49,7 +49,7 @@ setUnion :: IntSet -> IntSet -> IntSet
 setUnion set1 set2 = flipFoldr setInsert set1 set2
 
 setUnions :: List IntSet -> IntSet
-setUnions = foldl setUnion setEmpty
+setUnions list = foldl setUnion setEmpty list
 
 --------------------------------------------------------------------------------
 -- ** Association maps (sorted lists of (key,value) pairs)
@@ -76,13 +76,13 @@ mapLookup key list = go list where
 
 -- mapDelete :: Eq k => k -> Map k v -> Map k v
 mapDelete :: Int -> Map Int v -> Map Int v
-mapDelete key = go where
+mapDelete key list = go list where
   { go kvs = case kvs of { Nil -> Nil ; Cons kv rest -> case kv of
     { Pair k v -> ifte (eq k key) rest (Cons kv (go rest)) } } }
 
 -- | For proper insertion we need ordering, but we only have that for Ints...
 mapInsert :: Int -> v -> (v -> v) -> Map Int v -> Map Int v
-mapInsert key y f = go where
+mapInsert key y f list = go list where
   { go kvs = case kvs of { Nil -> Cons (Pair key y) Nil ; Cons kv rest -> case kv of
     { Pair k v -> case compare k key of
       { LT -> Cons kv               (go rest)
@@ -90,7 +90,7 @@ mapInsert key y f = go where
       ; GT -> Cons (Pair key y    )     kvs } } } }
 
 mapAdjust :: Int -> (v -> v) -> Map Int v -> Map Int v
-mapAdjust key f = go where
+mapAdjust key f list = go list where
   { go kvs = case kvs of { Nil -> Nil ; Cons kv rest -> case kv of
     { Pair k v -> case compare k key of
       { LT -> Cons kv               (go rest)
@@ -118,14 +118,14 @@ trieMember :: String -> Trie a -> Bool
 trieMember str trie = isJust (trieLookup str trie)
 
 trieInsert :: String -> a -> Trie a -> Trie a
-trieInsert string y = go string where
+trieInsert string y trie = go string trie where
   { go str trie = case trie of { Node mb table -> case str of
     { Nil -> Node (Just y) table
     ; Cons x xs -> Node mb (mapInsert (ord x) (trieSingleton xs y) (go xs) table) } } }
 
 -- | throws an exception if the key already exists
 trieInsertNew :: String -> String -> a -> Trie a -> Trie a
-trieInsertNew errmsg string y = go string where
+trieInsertNew errmsg string y trie = go string trie where
   { go str trie = case trie of { Node mb table -> case str of
     { Nil -> case mb of { Nothing -> Node (Just y) table ; _ -> error errmsg }
     ; Cons x xs -> Node mb (mapInsert (ord x) (trieSingleton xs y) (go xs) table) } } }
@@ -145,14 +145,14 @@ trieUnions list = case list of { Nil -> trieEmpty ; Cons this rest -> case rest 
   { Nil -> this ; _ -> trieUnion this (trieUnions rest) }}
 
 trieFromList :: List (Pair String a) -> Trie a
-trieFromList = foldr f trieEmpty where { f kv trie = case kv of { Pair k v -> trieInsert k v trie } }
+trieFromList list = foldr f trieEmpty list where { f kv trie = case kv of { Pair k v -> trieInsert k v trie } }
 
 -- | throws an exception if there is a duplicate key
 trieFromListUnique :: (String -> String) -> List (Pair String a) -> Trie a
-trieFromListUnique errmsg = foldr f trieEmpty where { f kv trie = case kv of { Pair k v -> trieInsertNew (errmsg k) k v trie } } 
+trieFromListUnique errmsg list = foldr f trieEmpty list where { f kv trie = case kv of { Pair k v -> trieInsertNew (errmsg k) k v trie } } 
 
 trieToList :: Trie a -> List (Pair String a)
-trieToList = go where { go trie = case trie of { Node mb table -> let
+trieToList trie = go trie where { go trie = case trie of { Node mb table -> let
   { f pair = case pair of { Pair k trie' -> map (prepend (chr k)) (go trie') }
   ; rest = concat (map f table)
   ; prepend x pair = case pair of { Pair xs y -> Pair (Cons x xs) y } }
