@@ -143,13 +143,6 @@ evalfunBB f v1 = boolToValue (f (valueToBool v1))
 evalfunBBB :: (Bool -> Bool -> Bool) -> Value -> Value -> Value
 evalfunBBB f v1 v2 = boolToValue (f (valueToBool v1) (valueToBool v2))
 
-unary   :: List a -> (a -> b)           -> b
-binary  :: List a -> (a -> a -> b)      -> b
-ternary :: List a -> (a -> a -> a -> b) -> b
-unary   args f = case args of { Cons x xs -> f x             ; Nil -> error "unary: not enough arguments"   }
-binary  args f = case args of { Cons x xs -> unary  xs (f x) ; Nil -> error "binary: not enough arguments"  }
-ternary args f = case args of { Cons x xs -> binary xs (f x) ; Nil -> error "ternary: not enough arguments" }
-
 evalPrim :: Prim -> List Value -> Value
 evalPrim prim args = case prim of
   { Error   -> unary   args (compose error valueToString)

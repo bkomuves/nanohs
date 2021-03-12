@@ -31,8 +31,8 @@ import Syntax
 isDCon :: Name -> Bool
 isDCon name = isUpper (head name)
 
--- | Mapping constructor names to constructor tags
-type DataConTable = Trie Con
+-- -- | Mapping constructor names to constructor tags
+-- type DataConTable = Trie Con
 
 con_False   = 0
 con_True    = 1
