@@ -56,7 +56,7 @@ type LList a = List (Located a)
 type LString = LList Char
 
 addLocations :: FilePath -> String -> LString
-addLocations fname = go startSrcPos where { go pos str = case str of { Nil -> Nil
+addLocations fname text = go startSrcPos text where { go pos str = case str of { Nil -> Nil
   ; Cons x xs -> let { pos' = nextSrcPos x pos } in Cons (Located (Loc fname pos pos') x) (go pos' xs) } }
 
 --------------------------------------------------------------------------------
@@ -167,20 +167,33 @@ satisfy f fn pos toks = case toks of
     ; False -> ParseErr pos } } }
 
 anyToken :: Parser tok tok
-anyToken = satisfy (\_ -> True)
+anyToken = satisfy (\_ -> True) 
 
 token :: Eq tok => tok -> Parser tok tok
-token t = satisfy (geq t)
+token t = satisfy (geq t) 
 
 tokens :: Eq tok => List tok -> Parser tok (List tok)
 tokens toks = case toks of { Nil -> preturn Nil ; Cons t ts ->
   pbind (token t) (\x -> pbind (tokens ts) (\xs -> preturn (Cons x xs))) }
+
+charToken :: Char -> Parser Char Char
+charToken t = satisfy (ceq t) 
+
+charTokens :: String -> Parser Char String
+charTokens toks = case toks of { Nil -> preturn Nil ; Cons t ts ->
+  pbind (charToken t) (\x -> pbind (charTokens ts) (\xs -> preturn (Cons x xs))) }
 
 oneOf :: Eq tok => List tok -> Parser tok tok
 oneOf list = satisfy (\x -> elem x list)
 
 noneOf :: Eq tok => List tok -> Parser tok tok
 noneOf list = satisfy (\x -> not (elem x list))
+
+charOneOf :: List Char -> Parser Char Char
+charOneOf list = satisfy (\x -> charElem x list)
+
+charNoneOf :: List Char -> Parser Char Char
+charNoneOf list = satisfy (\x -> not (charElem x list))
 
 eof :: Parser tok Unit
 eof fn pos str = case str of { Nil -> ParseOk Unit pos str ; Cons _ _ -> ParseErr pos }
@@ -199,10 +212,10 @@ _alphaL   = satisfy (\ch -> or (ceq ch '_') (isAlpha ch))
 alphaNumL = satisfy isAlphaNum
 
 spaces0 :: Lexer Int
-spaces0 = pfmap length (many (token ' '))
+spaces0 = pfmap length (many (charToken ' '))
 
 spaces1 :: Lexer Int
-spaces1 = pfmap length (many1 (token ' '))
+spaces1 = pfmap length (many1 (charToken ' '))
 
 digitsL :: Lexer String
 digitsL = many1 digitL
@@ -211,24 +224,24 @@ natL :: Lexer Int
 natL = pbind digitsL (\xs -> case readNat xs of { Just n -> preturn n ; Nothing -> pfail })
 
 intL :: Lexer Int
-intL = pbind (optional (token '-'))
+intL = pbind (optional (charToken '-'))
   (\mb -> case mb of { Nothing -> natL ; Just _ -> pfmap negate natL })
 
 charLiteralL :: Lexer Char
 charLiteralL =
-  pbind (token singleQuoteC) (\_ ->
-  pbind (anyToken          ) (\c ->
-  pbind (token singleQuoteC) (\_ -> preturn c)))
+  pbind (charToken singleQuoteC) (\_ ->
+  pbind (anyToken              ) (\c ->
+  pbind (charToken singleQuoteC) (\_ -> preturn c)))
 
 stringLiteralL :: Lexer String
 stringLiteralL =
-  pbind (token doubleQuoteC)                 (\_  ->
-  pbind (many (satisfy (cneq doubleQuoteC))) (\xs ->
-  pbind (token doubleQuoteC)                 (\_  -> preturn xs)))
+  pbind (charToken doubleQuoteC)                 (\_  ->
+  pbind (many (satisfy (cneq doubleQuoteC)))     (\xs ->
+  pbind (charToken doubleQuoteC)                 (\_  -> preturn xs)))
 
 identifierL :: Lexer Name
-identifierL = pbind _alphaL                                      (\x  ->
-              pbind (many (alternative alphaNumL (oneOf "_'#"))) (\xs ->
+identifierL = pbind _alphaL                                          (\x  ->
+              pbind (many (alternative alphaNumL (charOneOf "_'#"))) (\xs ->
               preturn (Cons x xs)))
 
 literalL :: Lexer Literal
@@ -239,21 +252,21 @@ literalL = choice
 
 specialL :: Lexer Special
 specialL = choice
-  [ preplace LParen    (token  '(' )
-  , preplace RParen    (token  ')' )
-  , preplace LBrace    (token  '{' )
-  , preplace RBrace    (token  '}' )
-  , preplace LBracket  (token  '[' )
-  , preplace RBracket  (token  ']' )
-  , preplace Arrow     (tokens "->")
-  , preplace DArrow    (tokens "=>")
-  , preplace HasType   (tokens "::")
-  , preplace Comma     (token  ',' )
-  , preplace Semicolon (token  ';' )
-  , preplace EqualSign (token  '=' )
-  , preplace Pipe      (token  '|' )
-  , preplace Lambda    (token  backslashC)
-  , preplace Dot       (token  '.' )
+  [ preplace LParen    (charToken  '(' )
+  , preplace RParen    (charToken  ')' )
+  , preplace LBrace    (charToken  '{' )
+  , preplace RBrace    (charToken  '}' )
+  , preplace LBracket  (charToken  '[' )
+  , preplace RBracket  (charToken  ']' )
+  , preplace Arrow     (charTokens "->")
+  , preplace DArrow    (charTokens "=>")
+  , preplace HasType   (charTokens "::")
+  , preplace Comma     (charToken  ',' )
+  , preplace Semicolon (charToken  ';' )
+  , preplace EqualSign (charToken  '=' )
+  , preplace Pipe      (charToken  '|' )
+  , preplace Lambda    (charToken  backslashC)
+  , preplace Dot       (charToken  '.' )
   ]
 
 lexemeL :: Lexer Token
@@ -267,8 +280,8 @@ lexemeL = choice
 -- | 0x0A, or 0x0D, or 0x0D,0x0A.
 eol_ :: Lexer Unit
 eol_ = alternative linux windows where
-  { linux   = preplace Unit (token newlineC)
-  ; windows = preplace Unit (pseq (token carriageReturnC) (optional (token newlineC))) }
+  { linux   = preplace Unit (charToken newlineC)
+  ; windows = preplace Unit (pseq (charToken carriageReturnC) (optional (charToken newlineC))) }
 
 eol :: Lexer Unit
 eol = alternative eol_ eof
@@ -283,17 +296,17 @@ commentL = ppost commentL' eol
 -- | without EOL
 commentL' :: Lexer String
 commentL' = choice [ comment1 , comment2 ] where
-  { comment1 = pseq (tokens "--" ) (many (noneOf [newlineC,carriageReturnC]))
-  ; comment2 = pseq (tokens "{-#") (many (noneOf [newlineC,carriageReturnC]))
+  { comment1 = pseq (charTokens "--" ) (many (charNoneOf [newlineC,carriageReturnC]))
+  ; comment2 = pseq (charTokens "{-#") (many (charNoneOf [newlineC,carriageReturnC]))
   }
 
 -- | We need to hide some stuff (for example @include@-s) from GHC
 nanoPragmaL :: Lexer Block
 nanoPragmaL = 
-  pbind (tokens "{-%")                                         (\_  -> 
-  pbind (many1 (locatedL lexemeL))                             (\ln -> 
-  pbind (tokens "%-}")                                         (\_  ->
-  pbind (ppost (many (noneOf [newlineC,carriageReturnC])) eol) (\_  -> preturn ln))))
+  pbind (charTokens "{-%")                                         (\_  -> 
+  pbind (many1 (locatedL lexemeL))                                 (\ln -> 
+  pbind (charTokens "%-}")                                         (\_  ->
+  pbind (ppost (many (charNoneOf [newlineC,carriageReturnC])) eol) (\_  -> preturn ln))))
 
 -- | Note: this accepts "eof"!
 emptyLineL :: Lexer Unit
