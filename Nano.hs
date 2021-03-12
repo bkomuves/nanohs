@@ -105,8 +105,6 @@ loadAndParseMany sofar fnames = case fnames of { Nil -> ioreturn (Pair sofar Nil
   iobind (loadAndParseMany sofar' rest) (\loaded -> case loaded of { Pair sofar'' toplevs2 ->
   ioreturn (Pair sofar'' (append toplevs1 toplevs2)) }) }) }
 
---  iobind (iomapM loadAndParse1 fnames) (\xxs -> ioreturn (concat xxs))
-
 loadAndParse1 :: Files -> FilePath -> IO Loaded
 loadAndParse1 sofar fname = case stringMember fname sofar of
   { True  -> ioreturn (Pair sofar Nil)
@@ -589,9 +587,9 @@ toplevToCode nfo toplev = case toplev of { TopLev named statfun -> case named of
     [ addLine ""
     , addWords [ "// static function `" , name , "` with arity = " , showInt envsize , " + " , showInt arity ]
     , addWords [ "heap_ptr " , staticLabel static , "() {" ]
+    -- , debugInfoToCode name statfun
     , sbind (functionBodyToCode nfo statfun) (\fresult -> addWords [ "return (" , fresult , ");" ] )
     , addLine "}" ] }}}
---    , debugInfoToCode name statfun
 
 debugInfoToCode name statfun = case statfun of { StatFun envsize arity lifted -> let { ntotal = plus envsize arity } in ssequence_
   [ addWords [ "printf(" , doubleQuoteStringLn "=======================" , ");" ]
@@ -722,6 +720,8 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
     [ addWords [ "// letrec " , showInt n ]
     , addWords [ "stack_ptr " , pre_sp  , " = rts_stack_allocate(" , showInt n , ");" ]
     , addWords [ "stack_ptr " , post_sp , " = SP;" ]
+    -- we fill it up with non-gc-refs, so that when allocation below triggers GC, it doesn't point to random places...
+    , addWords [ "for(int i=0;i<" , showInt n , ";i++) { " , pre_sp , "[i] = (uint64_t) INT_LITERAL(0); }" ]  
     -- allocate closures
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of { ClosureF cbody env arity ->
         case cbody of 
@@ -776,7 +776,7 @@ caseOfToCode nfo atom branches =
             , addLine "break; }" ]
         ; BranchF namedcon arity closure -> case namedcon of { Named cname con -> withFreshVar2 "env" "args" (\envptr args -> 
             case closure of { ClosureF cbody env arity -> ssequence_
-              [ addWords [ "case HTAG_DATACON(" , showInt con , "," , showInt arity , "): {    // " , cname , "/" , showInt arity ]
+              [ addWords [ "case TAGWORD_DATACON(" , showInt con , "," , showInt arity , "): {    // " , cname , "/" , showInt arity ]
               , case cbody of
                   { InlineBody _ -> sreturn Unit
                   ; StaticBody _ -> swhen (not (isNil env)) (sseq 
