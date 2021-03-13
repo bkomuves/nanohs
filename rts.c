@@ -52,8 +52,8 @@ char **ArgVector;
 #define HTAG_DCON  4      // data constructor
 
 // heap object tag word
-#define TAGWORD_DATACON(con_tag,con_arity)   (((con_arity)<<16) + ((con_tag  ) << 3) + HTAG_DCON)
-#define TAGWORD_CLOSURE(env_size,rem_arity)  (((env_size )<<16) + ((rem_arity) << 3) + HTAG_CLOS)
+#define TAGWORD_DATACON(con_tag,con_arity)             (                    ((con_arity)<<16) | ((con_tag  ) << 3) | HTAG_DCON )
+#define TAGWORD_CLOSURE(stat_idx, env_size,rem_arity)  ( ((stat_idx)<<32) | ((env_size )<<16) | ((rem_arity) << 3) | HTAG_CLOS )
 
 #define PTAG_OF(ptr)       (((int64_t)(ptr)) & 0x07)
 #define HAS_PTAG(ptr,tag)  (PTAG_OF(ptr) == (tag))
@@ -109,6 +109,16 @@ heap_ptr rts_internal_error(const char *msg) {
 }
 
 // -----------------------------------------------------------------------------
+// raw allocation
+
+heap_ptr malloc_words(int nwords) {
+  heap_ptr ptr = (heap_ptr) malloc( 8 * nwords );
+  if (!ptr)                          rts_internal_error("fatal: malloc failed"); 
+  if ((((intptr_t)ptr) & 0x07) != 0) rts_internal_error("fatal: malloc not aligned"); 
+  return ptr;
+}
+
+// -----------------------------------------------------------------------------
 // garbage collection
 
 heap_ptr New_Heap_begin;
@@ -122,20 +132,20 @@ heap_ptr rts_gc_worker(heap_ptr root) {
       uint64_t tagword = root[0];
       int size = (tagword >> 16) & 0xffff;      // payload size
       int htag = tagword & 0x07;
-      int ofs; 
       switch(htag) {
         case HTAG_FWDP: return (heap_ptr) ((tagword>>3)<<3);  // forwarding pointer
-        case HTAG_CLOS: ofs = 2; break;                       // closure
-        case HTAG_DCON: ofs = 1; break;                       // data constructor
+        case HTAG_CLOS: break;                                // closure
+        case HTAG_DCON: break;                                // data constructor
         default: 
           printf("root = %p | header = %llx | htag = %d | size = %d\n",root,tagword,htag,size);
           rts_internal_error("gc found an invalid heap object");
       }
       heap_ptr tgt = New_HP;
-      New_HP += (size + ofs);
-      for(int i=0; i<ofs ; i++) { tgt[i] = root[i]; }                                                   // copy header
-      root[0] = ((uint64_t)tgt) | 0x02;                                                                 // set forwarding pointer
-      for(int i=0; i<size; i++) { tgt[i+ofs] = (uint64_t) rts_gc_worker( (heap_ptr) root[i+ofs] ); }    // copy payload
+      New_HP += (size+1);
+      tgt[0] = root[0];                       // copy header
+      root[0] = ((uint64_t)tgt) | 0x02;       // set forwarding pointer
+      // copy payload
+      for(int i=0; i<size; i++) { tgt[i+1] = (uint64_t) rts_gc_worker( (heap_ptr) root[i+1] ); }   
       return tgt;
     } 
 
@@ -154,8 +164,7 @@ void rts_perform_gc() {
 printf("old heap size = %llu words\n",cur_heap_size);
 printf("new heap size = %llu words\n",new_heap_size);
 
-  New_Heap_begin = malloc( 8 * new_heap_size );
-  if (!New_Heap_begin) { rts_internal_error("fatal: malloc failed"); }
+  New_Heap_begin = malloc_words(new_heap_size);
   New_HP = New_Heap_begin;
 
   int stack_len = SP - Stack_begin;
@@ -226,10 +235,9 @@ heap_ptr rts_allocate_datacon(int con_tag, int con_arity) {
   return obj;
 }
 
-heap_ptr rts_allocate_closure(int statidx, int env_size, int rem_arity) {
-  heap_ptr obj = rts_heap_allocate(env_size + 2);
-  obj[0] = TAGWORD_CLOSURE(env_size,rem_arity);
-  obj[1] = (uint64_t)(statidx);
+heap_ptr rts_allocate_closure(uint64_t statidx, int env_size, int rem_arity) {
+  heap_ptr obj = rts_heap_allocate(env_size + 1);
+  obj[0] = TAGWORD_CLOSURE(statidx,env_size,rem_arity);
   return obj;
 }
 
@@ -269,8 +277,8 @@ heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t 
     // unsaturated call
     stack_ptr frame = SP - nargs;
     heap_ptr obj = rts_allocate_closure( statfun , ntotal , static_arity - ntotal);
-    for(int i=0;i<env_size ;i++) { obj[i+2]          = env  [i]; }
-    for(int j=0;j<nargs    ;j++) { obj[env_size+2+j] = frame[j]; }
+    for(int i=0;i<env_size ;i++) { obj[i+1]          = env  [i]; }
+    for(int j=0;j<nargs    ;j++) { obj[env_size+1+j] = frame[j]; }
     SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
     return obj;
   }
@@ -312,8 +320,8 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
 //printf("apply to closure\n");
           int rem_arity = (tagword & 0xffff) >> 3;
           int env_size  = (tagword >> 16) & 0xffff;
-          int statfun   = funobj[1];
-          return rts_apply_worker( env_size+rem_arity, statfun, env_size, funobj+2, nargs);
+          int statfun   = (tagword >> 32);
+          return rts_apply_worker( env_size+rem_arity, statfun, env_size, funobj+1, nargs);
         }
         // data constructor
         case HTAG_DCON: {
@@ -371,8 +379,8 @@ heap_ptr rts_force_value(heap_ptr obj) {
           int rem_arity = (tagword & 0xffff) >> 3;
           int env_size  = (tagword >> 16) & 0xffff;
           if (rem_arity > 0) { return obj; } else {
-            int statfun  = obj[1];
-            return rts_apply_worker( env_size, statfun, env_size, obj+2, 0);
+            int statfun  = (tagword >> 32);
+            return rts_apply_worker( env_size, statfun, env_size, obj+1, 0);
           } }
         // data con
         default: return obj;
@@ -410,24 +418,12 @@ int rts_generic_eq(heap_ptr arg1, heap_ptr arg2) {
       // both is an allocated heap object
       if (arg1[0] != arg2[0]) return false;
       int tagword = arg1[0];
-      switch(tagword & 0x07) {
-        // closure
-        case 0: {
-          int env_size  = (tagword >> 16) & 0xffff;
-          if (arg1[1] != arg2[1]) return false;
-          for(int i=0;i<env_size;i++) { if (!rts_generic_eq( (heap_ptr)arg1[i+2] , (heap_ptr)arg2[i+2] )) return false; }
-          return true;
-        }
-        // data constructor
-        case 4: {
-          int arity = (tagword >> 16) & 0xffff;
-          for(int i=0;i<arity;i++) { if (!rts_generic_eq( (heap_ptr)arg1[i+1] , (heap_ptr)arg2[i+1] )) return false; }
-          return true;
-        }
-        // invalid
-        default: 
-          return false;  
-    } }
+      int tag = tagword & 0x07;
+      if ((tag != 0) && (tag != 4)) return false;     // invalid tag
+      int size  = (tagword >> 16) & 0xffff;
+      for(int i=0;i<size;i++) { if (!rts_generic_eq( (heap_ptr)arg1[i+1] , (heap_ptr)arg2[i+1] )) return false; }
+      return true;
+    } 
 
     default:
       return false;     // one is real heap object, the other is a machine word
@@ -504,12 +500,12 @@ void rts_generic_print_limited(heap_ptr obj, int budget) {
         case HTAG_CLOS: {
           int rem_arity = (tagword & 0xffff) >> 3;
           int env_size  = (tagword >> 16) & 0xffff;
-          int stat_idx  = obj[1];
+          int stat_idx  = (tagword >> 32);
           printf("CLOSURE(static_%d/%d/%d)",stat_idx,env_size,rem_arity);
           if (budget > 0) {
             for(int i=0;i<env_size;i++) {
               if (i==0) printf("["); else printf(","); 
-              rts_generic_print_limited( (heap_ptr) obj[i+2] , budget-1);
+              rts_generic_print_limited( (heap_ptr) obj[i+1] , budget-1);
             }
             printf("]");
           }
@@ -549,14 +545,12 @@ void rts_initialize(int argc, char **argv) {
   rsp_begin = rsp;
   rsp_last  = rsp_begin;
 
-  // at the moment we allocate a closure (2 words) for each static function
+  // at the moment we allocate a closure (1 word) for each static function
   // which is stupid, whatever...
-  int heap_size = MAX( HEAP_SIZE , 128 + 2*NStatic );
+  int heap_size = MAX( HEAP_SIZE , 128 + NStatic );
 
-  Stack_begin = (heap_ptr) malloc( 8 * STACK_SIZE );
-  Heap_begin  = (heap_ptr) malloc( 8 * heap_size  );
-  if (!Stack_begin) { rts_internal_error("fatal: malloc failed"); }
-  if (!Heap_begin ) { rts_internal_error("fatal: malloc failed"); }
+  Stack_begin = (heap_ptr) malloc_words( STACK_SIZE );
+  Heap_begin  = (heap_ptr) malloc_words( heap_size  );
   Stack_end   = Stack_begin + STACK_SIZE;
   Heap_end    = Heap_begin  + heap_size;
   SP = Stack_begin;
@@ -568,11 +562,11 @@ void rts_initialize(int argc, char **argv) {
 //
   // initialize static stack. This simulates a top-level letrec, but with a 
   // letrec we couldn't really optimize the fully static function calls?
-  static_stack = (heap_ptr) malloc( 8 * NStatic );
+  static_stack = (heap_ptr) malloc_words( NStatic );
   for(int i=0;i<NStatic;i++) {
     int   arity  = StaticFunArities [i];
-    heap_ptr obj = rts_allocate_closure(i,0,arity);
-    static_stack[i] = (uint64_t)obj;   
+    static_stack[i] = (uint64_t) FROM_STATIDX(i);                          
+    // (uint64_t) rts_allocate_closure(i,0,arity);   // thunk
   }
 
 //   // evaluate thunks (this includes functions which looks like CAFs!!!)

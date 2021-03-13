@@ -201,7 +201,7 @@ closureToCode' nfo closure = case closure of { ClosureF sbody env arity -> case 
     { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
     ; _   -> let { envsize = length env } in withFreshVar "closure" (\var -> sseq3
       (addWords [ "heap_ptr " , var , " = rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ])
-      (copyEnvironmentTo nfo "SP" var 2 env)
+      (copyEnvironmentTo nfo "SP" var 1 env)
       (sreturn var)) }
   ; InlineBody lifted -> functionBodyToCode nfo (StatFun (length env) arity lifted)
   }}
@@ -215,18 +215,6 @@ closureToCode nfo closure = case closure of { ClosureF sbody env arity -> case s
       (sbind (closureToCode' nfo closure) (\thunk -> withFreshVar "val" (\val -> sseq
         (addWords [ "heap_ptr " , val , " = rts_force_value( (heap_ptr)(" , thunk , ") );" ])
         (sreturn val)))) }}
-
---    (sforM_ (zipIndex env) (\pair -> case pair of { Pair j idx -> 
---      addWords [ var , "[" , showInt (inc2 j) , "] = (uint64_t) DE_BRUIJN(" , showInt idx , ");" ] }))
---    (sreturn var)) }}
-
--- case cls of { ClosureF static env arity -> 
--- -- TOOD: optimize for env = Nil
--- -- why are we not using closureToCode here??
---         let { target = concat [ pre_sp, "[", showInt j , "]" ] } in withFreshVar "tgt" (\tgt -> ssequence_ 
---           [ addWords [ target , " = (uint64_t) rts_allocate_closure( " , showInt static , " , " , showInt (length env) , " , " , showInt arity , " );" ]
---           , swhen (not (isNil env)) (addWords [ "heap_ptr " , tgt , " = (heap_ptr) " , target , ";" ])
---           , copyEnvironmentTo nfo post_sp tgt 2 env ] )}})
 
 evalToReg :: StatInfo -> Name -> Lifted -> CodeGenM Name
 evalToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
@@ -328,7 +316,7 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
           { InlineBody _ -> sreturn Unit
           ; StaticBody _ -> case env of { Nil -> sreturn Unit ; _ -> withFreshVar "tgt" (\tgt -> sseq
               (addDefin tgt (concat [ "(heap_ptr) " , pre_sp , "[", showInt j , "]" ]))
-              (copyEnvironmentTo nfo "SP" tgt 2 env) )} }}})
+              (copyEnvironmentTo nfo "SP" tgt 1 env) )} }}})
     -- evaluate thunks
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of {
         ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) 
@@ -441,8 +429,8 @@ applyClosure nfo closure args = case closure of { ClosureF cbody env fun_arity -
         { InlineBody _      -> error "applyClosure: underapplication of inlined closure ?!?"
         ; StaticBody static -> withFreshVar "obj" (\obj -> sseq (ssequence_
               [ addWords [ "heap_ptr ", obj , " = rts_allocate_closure( " , showInt static , " , " , showInt ntotal , " , " , showInt (minus fun_arity nargs) , " );" ]
-              , copyEnvironmentTo  nfo "SP" obj     2          env
-              , copyEnvironmentTo' nfo "SP" obj (inc2 envsize) args 
+              , copyEnvironmentTo  nfo "SP" obj    1          env
+              , copyEnvironmentTo' nfo "SP" obj (inc envsize) args 
               ]) (sreturn obj)) } } }
 
 applicationToCode :: StatInfo -> Lifted -> List Atom -> CodeGenM CodeLine
