@@ -211,7 +211,7 @@ stack_ptr rts_stack_allocate(int size) {
   int k = rsp_last - rsp;
   if (k >= 1024*1024) {
     rsp_last = rsp;
-    printf("c stack size = %llu\n" , rsp_begin - rsp);
+    printf("c stack size = %llu bytes\n" , rsp_begin - rsp);
   }
 
   stack_ptr loc = SP;
@@ -400,6 +400,7 @@ heap_ptr rts_force_thunk_at(stack_ptr ptr) {
 // generic equality
 
 int rts_generic_eq(heap_ptr arg1, heap_ptr arg2) {
+  // printf("generic equality\n");
   switch ( IS_HEAP_PTR(arg1) + 2*IS_HEAP_PTR(arg2) ) {
     case 0:
       // both is a machine word
@@ -462,6 +463,7 @@ heap_ptr rts_marshal_from_cstring(const char *str) {
 // -----------------------------------------------------------------------------
 // generic print
 
+// closures can be refer to themselves, so we need some kind of "gas" 
 void rts_generic_print_limited(heap_ptr obj, int budget) {
   switch(PTAG_OF(obj)) {
     case PTAG_INT:
