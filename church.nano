@@ -1,0 +1,60 @@
+
+{-# LANGUAGE NoImplicitPrelude, Rank2Types, TypeApplications #-}
+
+import PrimGHC
+import Prelude ( Int , undefined )
+import Base
+
+{-% include "Base.hs" %-}
+
+main = runIO# action
+
+action = iosequence_
+  [ putStrLn "church number example"
+  , print (natToInt (pow ten (intToNat 5)))
+  ]
+
+-- action = putStrLn (g3 15 16 17) where
+--   { f a b c d e f g = intercalate "," (map (compose3 id showInt id) (id id [a,b,c,d,e,f,g]))
+--   ; g4 = (id id f) 11 12 13  
+--   ; g3 = (id id g4) 14 
+--   }
+
+-- type X   = Int
+data Nat = Nat (forall a. a -> (a -> a) -> a)
+
+elim :: Nat -> a -> (a -> a) -> a
+elim nat z s = case nat of { Nat n -> n z s }
+ 
+natToInt :: Nat -> Int
+natToInt n = elim n 0 inc
+
+intToNat :: Int -> Nat
+intToNat n = ifte (eq n 0) zero (succ (intToNat (dec n)))
+
+zero :: Nat 
+zero = Nat (\z s -> z)
+
+succ :: Nat -> Nat 
+succ n = Nat (\z s -> s (elim n z s))
+
+one   = Nat (\z s -> s (elim zero  z s)) 
+two   = Nat (\z s -> s (elim one   z s))
+three = Nat (\z s -> s (elim two   z s))
+four  = Nat (\z s -> s (elim three z s))
+five  = Nat (\z s -> s (elim four  z s))
+six   = Nat (\z s -> s (elim five  z s))
+
+ten      = add five five
+hundred  = mul ten ten
+thousand = mul hundred ten
+
+add :: Nat -> Nat -> Nat
+add n m = Nat (\z s -> elim m (elim n z s) s)
+
+mul :: Nat -> Nat -> Nat
+mul n m = elim n zero (add m)
+
+pow :: Nat -> Nat -> Nat
+pow n e = elim e one (mul n)
+
