@@ -158,7 +158,7 @@ fromRight ei = case ei of { Right y -> y ; Left _ -> error "fromRight" }
 --------------------------------------------------------------------------------
 -- ** Pair, Triple
 
-data Pair a b = Pair a b deriving Show
+-- data Pair a b = Pair a b deriving Show
 
 fst :: Pair a b -> a
 fst pair = case pair of { Pair x _ -> x }
@@ -428,22 +428,23 @@ lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newline
 --------------------------------------------------------------------------------
 -- ** IO Monad
 
--- type IO a = (Unit -> a)
+-- type IO a = RealWorld -> Pair RealWorld a
 
 ioreturn :: a -> IO a
-ioreturn x = IO (\_ -> x)
+ioreturn x = (\token -> Pair token x)
 
 ioret_ :: IO Unit
-ioret_ = IO (\_ -> Unit)
+ioret_ = (\token -> Pair token Unit)
 
 -- | Note: we have to be very careful about how to implement bind!
 -- (because we are cheating with ML-style IO)
 iobind :: IO a -> (a -> IO b) -> IO b
-iobind action u = case action of { IO f -> IO (\q -> case u (f Unit) of { IO g -> g q } ) }
+iobind action u token = case action token of { Pair token' x -> u x token' }
+-- iobind action u = case action of { IO f -> IO (\q -> case u (f Unit) of { IO g -> g q } ) }
 -- iobind action u _ = u (action Unit) Unit
 
 ioerror :: String -> IO a
-ioerror msg = IO (\_ -> error msg)
+ioerror msg = (\token -> Pair token (error msg))
 
 ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
 ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
@@ -467,19 +468,19 @@ ioforM_ :: List a -> (a -> IO b) -> IO Unit
 ioforM_ list f = iomapM_ f list
 
 getChar :: IO (Maybe Char)
-getChar = IO (\u -> getChar# u)
+getChar = (\token -> Pair token (getChar# Unit))
 
 putChar :: Char -> IO Unit
-putChar c = IO (\_ -> putChar# c)
+putChar c = (\token -> Pair token (putChar# c))
 
 exit :: Int -> IO Unit
-exit k = IO (\_ -> exit# k)
+exit k = (\token -> Pair token (exit# k))
 
 print :: Show a => a -> IO Unit
-print what = IO (\_ -> print# what)
+print what = (\token -> Pair token (print# what))
 
 getArg :: Int -> IO (Maybe String)
-getArg i = IO (\_ -> getArg# i)
+getArg i = (\token -> Pair token (getArg# i))
 
 getArgs :: IO (List String)
 getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
@@ -487,7 +488,7 @@ getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of
   ; Just this -> iobind (go (inc k)) (\rest -> ioreturn (Cons this rest)) })}
 
 putStr :: String -> IO Unit
-putStr xs = case xs of  { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
+putStr xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
 
 putStrLn :: String -> IO Unit
 putStrLn str = ioseq (putStr str) (putChar (chr 10)) 
@@ -495,16 +496,16 @@ putStrLn str = ioseq (putStr str) (putChar (chr 10))
 type FilePath = String
 
 openFile :: FilePath -> IOMode -> IO Handle
-openFile fn mode = IO (\_ -> openFile# fn mode)
+openFile fn mode = (\token -> Pair token (openFile# fn mode))
 
 hClose :: Handle -> IO Unit
-hClose h = IO (\_ -> hClose# h)
+hClose h = (\token -> Pair token (hClose# h))
 
 hGetChar :: Handle -> IO (Maybe Char)
-hGetChar h = IO (\_ -> hGetChar# h)
+hGetChar h = (\token -> Pair token (hGetChar# h))
 
 hPutChar :: Handle -> Char -> IO Unit
-hPutChar h c = IO (\_ -> hPutChar# h c)
+hPutChar h c = (\token -> Pair token (hPutChar# h c))
 
 hGetContents :: Handle -> IO String
 hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
@@ -512,8 +513,7 @@ hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of
   ; Just y  -> iobind go (\ys -> ioreturn (Cons y ys)) }) }
 
 hPutStr :: Handle -> String -> IO Unit
-hPutStr h s = IO (\_ -> hPutStr# h s)
--- hPutStr h = go where { go xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (hPutChar h y) (go ys) } }
+hPutStr h s = (\token -> Pair token (hPutStr# h s))
 
 hPutStrLn :: Handle -> String -> IO Unit
 hPutStrLn h str = ioseq (hPutStr h str) (hPutChar h (chr 10)) 
@@ -522,7 +522,7 @@ withFile :: FilePath -> IOMode -> (Handle -> IO a) -> IO a
 withFile fn mode action =
   iobind (openFile fn mode) (\handle -> 
   iobind (action handle)    (\result -> 
-  iobind (hClose handle)    (\_ -> ioreturn result)))
+  iobind (hClose handle)    (\_      -> ioreturn result)))
 
 readFile :: FilePath -> IO String
 readFile fn = withFile fn ReadMode hGetContents

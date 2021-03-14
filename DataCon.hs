@@ -41,22 +41,23 @@ con_Nil     = 3
 con_Cons    = 4
 con_Nothing = 5
 con_Just    = 6
-con_ReadMode      = 7
-con_WriteMode     = 8
-con_AppendMode    = 9
-con_ReadWriteMode = 10
-con_IO            = 11
+con_Pair          = 7
+con_RealWorld     = 8
+con_ReadMode      = 9
+con_WriteMode     = 10
+con_AppendMode    = 11
+con_ReadWriteMode = 12
 
 type DConState = Pair Int DataConTable
 
 initialDConState :: DConState
-initialDConState = Pair 12 (trieFromList predefinedDataCons)
+initialDConState = Pair 13 (trieFromList predefinedDataCons)
 
 predefinedDataCons :: List (Pair String Int)
 predefinedDataCons =
-  [ Pair "False" con_False , Pair "True" con_True , Pair "Unit"    con_Unit    , Pair "IO"   con_IO
+  [ Pair "False" con_False , Pair "True" con_True , Pair "Unit"    con_Unit    , Pair "Pair" con_Pair
   , Pair "Nil"   con_Nil   , Pair "Cons" con_Cons , Pair "Nothing" con_Nothing , Pair "Just" con_Just 
-  , Pair "ReadMode"   con_ReadMode   , Pair "WriteMode"     con_WriteMode        
+  , Pair "ReadMode"   con_ReadMode   , Pair "WriteMode"     con_WriteMode      , Pair "RealWorld" con_RealWorld   
   , Pair "AppendMode" con_AppendMode , Pair "ReadWriteMode" con_ReadWriteMode ]
 
 -- | Collect data constructors from the source.
@@ -70,10 +71,12 @@ predefinedDataCons =
 -- *  4 = Cons
 -- *  5 = Nothing
 -- *  6 = Just
--- *  7 = ReadMode
--- *  8 = WriteMode
--- *  9 = AppendMode
--- * 10 = ReadWriteMode
+-- *  7 = Pair
+-- *  8 = RealWorld
+-- *  9 = ReadMode
+-- * 10 = WriteMode
+-- * 11 = AppendMode
+-- * 12 = ReadWriteMode
 -- * 11 = IO
 -- * 12.. = user defined constructors
 --

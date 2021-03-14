@@ -6,7 +6,7 @@
 #define MAX(a,b)   (((a)>=(b))?(a):(b))
 
 #define STACK_SIZE   (  1024*1024)
-#define HEAP_SIZE    (8*1024*1024)
+#define HEAP_SIZE    (  1024*1024)
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
@@ -75,18 +75,19 @@ char **ArgVector;
 #define TO_FILE(ptr)     ((FILE*) ((((intptr_t)ptr)>>3)<<3) )
 #define FROM_FILE(fptr)  ( (heap_ptr) ( ((intptr_t)fptr) | PTAG_FILE ) )
 
-#define CON_False    0
-#define CON_True     1
-#define CON_Unit     2
-#define CON_Nil      3
-#define CON_Cons     4
-#define CON_Nothing  5
-#define CON_Just     6
-#define CON_ReadMode        7
-#define CON_WriteMode       8
-#define CON_AppendMode      9
-#define CON_ReadWriteMode  10
-#define CON_IO             11
+#define CON_False     0
+#define CON_True      1
+#define CON_Unit      2
+#define CON_Nil       3
+#define CON_Cons      4
+#define CON_Nothing   5
+#define CON_Just      6
+#define CON_Pair            7
+#define CON_RealWorld       8
+#define CON_ReadMode        9
+#define CON_WriteMode      10
+#define CON_AppendMode     11
+#define CON_ReadWriteMode  12
 
 #define FALSE    NULLARY_CON( CON_False   )
 #define TRUE     NULLARY_CON( CON_True    )
@@ -125,32 +126,31 @@ heap_ptr New_Heap_begin;
 heap_ptr New_HP;
 
 heap_ptr rts_gc_worker(heap_ptr root) {
-  switch(PTAG_OF(root)) {
-
+  if (IS_HEAP_PTR(root)) {
     // closure or data constructor
-    case PTAG_PTR: { 
-      uint64_t tagword = root[0];
-      int size = (tagword >> 16) & 0xffff;      // payload size
-      int htag = tagword & 0x07;
-      switch(htag) {
-        case HTAG_FWDP: return (heap_ptr) ((tagword>>3)<<3);  // forwarding pointer
-        case HTAG_CLOS: break;                                // closure
-        case HTAG_DCON: break;                                // data constructor
-        default: 
-          printf("root = %p | header = %llx | htag = %d | size = %d\n",root,tagword,htag,size);
-          rts_internal_error("gc found an invalid heap object");
-      }
-      heap_ptr tgt = New_HP;
-      New_HP += (size+1);
-      tgt[0] = root[0];                       // copy header
-      root[0] = ((uint64_t)tgt) | 0x02;       // set forwarding pointer
-      // copy payload
-      for(int i=0; i<size; i++) { tgt[i+1] = (uint64_t) rts_gc_worker( (heap_ptr) root[i+1] ); }   
-      return tgt;
-    } 
+    uint64_t tagword = root[0];
+    int size = (tagword >> 16) & 0xffff;      // payload size
+    int htag = tagword & 0x07;
 
+    switch(htag) {
+      case HTAG_FWDP: return (heap_ptr) ((tagword>>3)<<3); break; // forwarding pointer
+      case HTAG_CLOS: break;                                      // closure
+      case HTAG_DCON: break;                                      // data constructor
+      default: 
+        printf("root = %p | header = %llx | htag = %d | size = %d\n",root,tagword,htag,size);
+        rts_internal_error("gc found an invalid heap object");
+    }
+    heap_ptr tgt = New_HP;
+    New_HP += (size+1);
+    tgt[0] = root[0];                            // copy header
+    root[0] = ((uint64_t)tgt) | HTAG_FWDP;       // set forwarding pointer
+    // copy payload
+    for(int i=0; i<size; i++) { tgt[i+1] = (uint64_t) rts_gc_worker( (heap_ptr) root[i+1] ); }   
+    return tgt;
+  } 
+  else {
     // not an allocated heap object
-    default: return root;
+    return root;
   }
 } 
 
@@ -158,7 +158,7 @@ void rts_perform_gc() {
   printf("performing GC...\n");
 
   uint64_t cur_heap_size = HP - Heap_begin;
-  uint64_t new_heap_size = MAX( cur_heap_size , 3 * Last_compacted_heap_size );
+  uint64_t new_heap_size = 1024 + MAX( cur_heap_size , 2 * Last_compacted_heap_size );
 
 // printf("old heap: %p -> %p\n",Heap_begin,HP);
 printf("old heap size = %llu words\n",cur_heap_size);
@@ -169,14 +169,15 @@ printf("new heap size = %llu words\n",new_heap_size);
 
   int stack_len = SP - Stack_begin;
   for(int j=0;j<stack_len;j++) { 
+    // printf("stack entry %d / %d\n",j,stack_len);
     Stack_begin[j] = (uint64_t) rts_gc_worker( (heap_ptr) Stack_begin[j] ); 
   }
 
-  // we need this because there can be thunks ??
-  for(int j=0;j<NStatic;j++) { 
-    // printf("%d | %llu\n", j, New_HP - New_Heap_begin);
-    static_stack[j] = (uint64_t) rts_gc_worker( (heap_ptr) static_stack[j] ); 
-  }
+//   // we need this because there can be thunks ??
+//   for(int j=0;j<NStatic;j++) { 
+//     // printf("%d | %llu\n", j, New_HP - New_Heap_begin);
+//     static_stack[j] = (uint64_t) rts_gc_worker( (heap_ptr) static_stack[j] ); 
+//   }
 
   free(Heap_begin);
   Heap_begin = New_Heap_begin;
@@ -247,7 +248,7 @@ heap_ptr rts_allocate_closure(uint64_t statidx, int env_size, int rem_arity) {
 int rts_marshal_to_cstring(int nmax, char *target, heap_ptr source) {
   heap_ptr ptr = source;
   int i = 0;
-  while( i < nmax-1 && IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_Cons,2)) ) {
+  while( (i < nmax-1) && (IS_HEAP_PTR(ptr)) && (ptr[0] == TAGWORD_DATACON(CON_Cons,2)) ) {
     int c = TO_INT(ptr[1]);
     target[i++] = c;
     ptr = (heap_ptr)(ptr[2]);
@@ -542,7 +543,7 @@ void rts_initialize(int argc, char **argv) {
   // letrec we couldn't really optimize the fully static function calls?
   static_stack = (heap_ptr) malloc_words( NStatic );
   for(int i=0;i<NStatic;i++) {
-    int   arity  = StaticFunArities [i];
+    // int arity  = StaticFunArities [i];
     static_stack[i] = (uint64_t) FROM_STATIDX(i); 
   }
 
@@ -596,7 +597,24 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 
 // -----------------------------------------------------------------------------
 
+// runIO :: IO a -> a
+// type IO a = RealWorld -> Pair RealWorld a
+heap_ptr prim_RunIO(heap_ptr funobj) {
+  // recall that "type IO a = (Unit -> a)"
+  stack_ptr loc = rts_stack_allocate(1);
+  loc[0] = (uint64_t) NULLARY_CON( CON_RealWorld );
+  heap_ptr pair = rts_apply( funobj , 1 );
+  if( IS_HEAP_PTR(pair) && (pair[0] == TAGWORD_DATACON(CON_Pair,2)) ) {
+    return (heap_ptr) pair[2];
+  }
+  else {
+    rts_internal_error("runIO: return is not a (RealWorld,y) pair");
+    return UNIT;
+  }
+}  
+
 // // runIO :: IO a -> a
+// // type IO a = Unit -> a
 // heap_ptr prim_RunIO(heap_ptr funobj) {
 //   // recall that "type IO a = (Unit -> a)"
 //   stack_ptr loc = rts_stack_allocate(1);
@@ -604,24 +622,25 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 //   return rts_apply( funobj , 1 );
 // }  
 
-// runIO :: IO a -> a
-heap_ptr prim_RunIO(heap_ptr arg) {
-  printf("[rts version = C99]\n");
-  // recall that "data IO a = IO (Unit -> a)"
-  heap_ptr ptr = rts_force_value(arg);
-  if( IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_IO,1)) ) {
-    heap_ptr funobj = (heap_ptr) ptr[1];
-    stack_ptr loc = rts_stack_allocate(1);
-    loc[0] = (uint64_t) UNIT;
-    return rts_apply( funobj , 1 );
-  }  
-  else {
-    fprintf(stderr,"PROBLEM:\n");
-    rts_generic_println(arg); 
-    rts_internal_error("runIO: argument is not an IO action");
-    return UNIT;
-  }
-}
+// // runIO :: IO a -> a
+// // data IO a = IO (Unit -> a)
+//heap_ptr prim_RunIO(heap_ptr arg) {
+//  printf("[rts version = C99]\n");
+//  // recall that "data IO a = IO (Unit -> a)"
+//  heap_ptr ptr = rts_force_value(arg);
+//  if( IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_IO,1)) ) {
+//    heap_ptr funobj = (heap_ptr) ptr[1];
+//    stack_ptr loc = rts_stack_allocate(1);
+//    loc[0] = (uint64_t) UNIT;
+//    return rts_apply( funobj , 1 );
+//  }  
+//  else {
+//    fprintf(stderr,"PROBLEM:\n");
+//    rts_generic_println(arg); 
+//    rts_internal_error("runIO: argument is not an IO action");
+//    return UNIT;
+//  }
+//}
 
 // -----------------------------------------------------------------------------
 
@@ -733,7 +752,7 @@ heap_ptr prim_HPutChar(heap_ptr harg, heap_ptr carg) {
 
 // hPutStr# :: Handle -> String -> Unit
 heap_ptr prim_HPutStr(heap_ptr harg, heap_ptr sarg) {
-  char *cstr;
+  char cstr[1024];
   rts_marshal_to_cstring( 1024 , cstr, sarg );
   fputs( cstr , TO_FILE(harg) );
   return UNIT;

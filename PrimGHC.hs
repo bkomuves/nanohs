@@ -41,13 +41,20 @@ data Maybe a = Nothing | Just a deriving Show
 
 type Handle = IO.Handle
 
-newtype IO a = IO (Unit -> a)
+data Pair a b = Pair a b deriving Show
+
+--------------------------------------------------------------------------------
+-- * IO support
+
+data RealWorld = RealWorld
+
+type IO a = RealWorld -> Pair RealWorld a
 
 {-# NOINLINE runIO# #-}
 runIO# :: IO a -> IO.IO a
-runIO# (IO f) = do
+runIO# f = do
   Prelude.putStrLn "[rts version = GHC]"
-  case f Unit of { y -> Prelude.return y }
+  case f RealWorld of { Pair _ y -> Prelude.return y }
 
 --------------------------------------------------------------------------------
 -- * Built-ins \/ primops
