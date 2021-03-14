@@ -159,6 +159,8 @@ liftedProgramToCode source strlits dcontable pair = case pair of { LProgram topl
         (addWords [ "rts_generic_println(" , fresult , ");" ])))
     , addLines [ "exit(0);" , "}" ]
     ] }
+
+--------------------------------------------------------------------------------
   
 -- | Sometimes we want to inline it
 functionBodyToCode :: StatInfo -> StatFun -> CodeGenM Name
@@ -184,8 +186,8 @@ toplevToCode nfo toplev = case toplev of { TopLev named statfun -> case named of
 debugInfoToCode name statfun = case statfun of { StatFun envsize arity lifted -> let { ntotal = plus envsize arity } in ssequence_
   [ addWords [ "printf(" , doubleQuoteStringLn "=======================" , ");" ]
   , addWords [ "printf(" , doubleQuoteStringLn name , ");" ]
-  , sforM_ (range envsize) (\i -> addWords [ "rts_debug_println(" , doubleQuoteString (appendInt "env" i) , ", (heap_ptr) SP[-" , showInt ntotal , "+" , showInt i , "] );" ])
-  , sforM_ (range arity  ) (\i -> addWords [ "rts_debug_println(" , doubleQuoteString (appendInt "arg" i) , ", (heap_ptr) SP[-" , showInt arity  , "+" , showInt i , "] );" ])
+  , sforM_ (range arity  ) (\i -> addWords [ "rts_debug_println(" , doubleQuoteString (appendInt "arg" (minus arity   (inc i))) , ", (heap_ptr) SP[-" , showInt ntotal  , "+" , showInt i , "] );" ])
+  , sforM_ (range envsize) (\i -> addWords [ "rts_debug_println(" , doubleQuoteString (appendInt "env" (minus envsize (inc i))) , ", (heap_ptr) SP[-" , showInt envsize , "+" , showInt i , "] );" ])
   ]}
 
 --------------------------------------------------------------------------------
@@ -352,18 +354,19 @@ caseOfToCode nfo atom branches =
             [ addLine "default: {" 
             , sbind (closureToCode nfo closure) (\res -> addSetValue result res) 
             , addLine "break; }" ]
-        ; BranchF namedcon arity closure -> case namedcon of { Named cname con -> withFreshVar2 "env" "args" (\envptr args -> 
+        ; BranchF namedcon arity closure -> case namedcon of { Named cname con -> withFreshVar3 "env" "args" "base" (\envptr args base -> 
             case closure of { ClosureF cbody env arity -> ssequence_
               [ addWords [ "case TAGWORD_DATACON(" , showInt con , "," , showInt arity , "): {    // " , cname , "/" , showInt arity ]
+              , addWords [ "stack_ptr " , base , " = SP;" ]
+              , swhen (gt arity 0) (ssequence_
+                  [ addWords [ "stack_ptr " , args , " = rts_stack_allocate(" , showInt arity , ");" ]
+                  , sforM_ (range arity) (\j -> addWords [ args , "[" , showInt (minus arity (inc j)) , "] = " , scrutinee , "[" , showInt (inc j) , "];" ])
+                  ])
               , case cbody of
                   { InlineBody _ -> sreturn Unit
                   ; StaticBody _ -> swhen (not (isNil env)) (sseq 
                       (addWords [ "stack_ptr " , envptr , " =  rts_stack_allocate(" , showInt (length env) , ");" ])
-                      (copyEnvironmentTo nfo envptr envptr 0 env)) }
-              , swhen (gt arity 0) (ssequence_
-                  [ addWords [ "stack_ptr " , args , " = rts_stack_allocate(" , showInt arity , ");" ]
-                  , sforM_ (range arity) (\j -> addWords [ args , "[" , showInt j , "] = " , scrutinee , "[" , showInt (inc j) , "];" ])
-                  ])
+                      (copyEnvironmentTo nfo base envptr 0 env)) }
               , case cbody of
                   { InlineBody lifted -> sbind (liftedToCode nfo lifted) (\res -> addSetValue result res)
                   ; StaticBody static -> sbind (callStatic static      ) (\res -> addSetValue result res) }
@@ -372,8 +375,9 @@ caseOfToCode nfo atom branches =
 --------------------------------------------------------------------------------
 -- ** application
 
+-- | Note the `reverse` - we put everything in reverse order to the stack!
 copyEnvironmentTo' :: StatInfo -> Name -> Name -> Int -> List Atom -> CodeGenM_
-copyEnvironmentTo' nfo from target ofs env = sforM_ (zipIndex env) (\pair -> case pair of { Pair j atom -> 
+copyEnvironmentTo' nfo from target ofs env = sforM_ (zipIndex (reverse env)) (\pair -> case pair of { Pair j atom -> 
   let { setTarget = concat [ target , "[" , showInt (plus j ofs) , "] = (uint64_t) " ] } 
   in  case atom of
     { VarA nvar -> case nvar of { Named name var -> case var of  
@@ -387,14 +391,14 @@ idxToAtom name i = VarA (Named name (IdxV i))
 copyEnvironmentTo :: StatInfo -> Name -> Name -> Int -> List Idx -> CodeGenM_
 copyEnvironmentTo nfo from target ofs env = copyEnvironmentTo' nfo from target ofs (map (idxToAtom "xxx") env)
 
--- copy environment, then copy args, assembling these on the stack
+-- copy the args, then copy the environment (everything is in reverse oreder), assembling these on the stack
 assembleClosureArgs' :: StatInfo -> List Idx -> List Atom -> CodeGenM Name
 assembleClosureArgs' nfo env args = let { envsize = length env ; nargs = length args ; ntotal = plus envsize nargs } in 
   ifte (eq ntotal 0) (sreturn "NULL") 
   ( withFreshVar "loc" (\loc -> sseq (ssequence_
     [ addWords [ "stack_ptr " , loc , " = rts_stack_allocate(" , showInt ntotal , ");" ]
-    , copyEnvironmentTo  nfo loc loc 0       env
-    , copyEnvironmentTo' nfo loc loc envsize args 
+    , copyEnvironmentTo' nfo loc loc 0     args
+    , copyEnvironmentTo  nfo loc loc nargs env 
     ]) (sreturn loc) ))
 
 assembleClosureArgs :: StatInfo -> List Idx -> List Idx -> CodeGenM Name
@@ -426,11 +430,11 @@ applyClosure nfo closure args = case closure of { ClosureF cbody env fun_arity -
             sbind (callClosureBody nfo closure)                        (\funres -> 
                   (genericApplicationTo nfo funres (drop fun_arity args))))
     ; LT -> case cbody of
-        { InlineBody _      -> error "applyClosure: underapplication of inlined closure ?!?"
+        { InlineBody _      -> error "applyClosure: underapplication of inlined closure (?!?)"
         ; StaticBody static -> withFreshVar "obj" (\obj -> sseq (ssequence_
               [ addWords [ "heap_ptr ", obj , " = rts_allocate_closure( " , showInt static , " , " , showInt ntotal , " , " , showInt (minus fun_arity nargs) , " );" ]
-              , copyEnvironmentTo  nfo "SP" obj    1          env
-              , copyEnvironmentTo' nfo "SP" obj (inc envsize) args 
+              , copyEnvironmentTo' nfo "SP" obj  1          args
+              , copyEnvironmentTo  nfo "SP" obj (inc nargs) env 
               ]) (sreturn obj)) } } }
 
 applicationToCode :: StatInfo -> Lifted -> List Atom -> CodeGenM CodeLine
@@ -439,9 +443,9 @@ applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ 
   ; AtmF atom    -> case atom of
     { ConA named   -> let { nargs = length args} in case named of { Named dcon_name con -> withFreshVar "obj" (\obj -> sseq (ssequence_
         [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
-        , copyEnvironmentTo' nfo "SP" obj 1 args
+        , copyEnvironmentTo' nfo "SP" obj 1 (reverse args)
         ]) (sreturn obj)) }
-    ; _ -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
-  ; _   -> sbind (evalToReg nfo "fun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
+    ; _ -> sbind (evalToReg nfo "afun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
+  ; _   -> sbind (evalToReg nfo "gfun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
 
 --------------------------------------------------------------------------------

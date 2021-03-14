@@ -165,16 +165,21 @@ lambdaToClosure nstatic name boundary lambda = case lambda of { LambdaT nargs bo
   let { newlevel = plus boundary nargs
       ; pruned   = pruneEnvironment boundary newlevel body
       ; npruned  = length pruned
+      ; ntotal   = plus nargs npruned
+      ; newstart = minus boundary npruned
       ; envtable = zip pruned (reverse (range npruned))
       ; pr_idxs  = map (\j -> minus boundary (inc j)) pruned
-      ; replaceIdx level idx = let { j = minus level (inc idx) } in 
-          ifte (ge j boundary) (IdxV idx)
+      ; replaceIdx1 level idx = let { j = minus level (inc idx) } in 
+          ifte (ge j boundary) (idx) 
             (case mapLookup j envtable of
               { Nothing -> error "lambdaToClosure: fatal error: variable not in the pruned environment"
-              ; Just m  -> let { i = plus (minus level boundary) m } in IdxV i })
+              ; Just m  -> plus (minus level boundary) m })
+      -- flip argument order (including the environment!)
+      ; replaceIdx level old = let { idx = replaceIdx1 level old ; j = minus level (inc idx ) } in
+          ifte (ge j newlevel) idx (plus (minus level newlevel) (minus j newstart))
       ; replaceAtom level atom = case atom of 
           { VarA nvar -> case nvar of { Named name var -> case var of
-            { IdxV idx -> VarA (Named name (replaceIdx level idx)) 
+            { IdxV idx -> VarA (Named name (IdxV (replaceIdx level idx))) 
             ; _        -> atom }}
           ; _ -> atom }
       ; body' = transformAtom replaceAtom newlevel body
@@ -194,9 +199,7 @@ termToInlineClosure nstatic name level tm =
   sbind (closureConvert nstatic name 0 level tm) (\lifted ->
   sreturn (ClosureF (InlineBody lifted) Nil 0))
 
--- doInlineClosure :: Term -> Bool
--- doInlineClosure _ = False
-
+doInlineClosure :: Term -> Bool
 doInlineClosure tm = case tm of
   { LamT _     -> False
   ; AtmT _     -> True

@@ -101,7 +101,7 @@ char **ArgVector;
 // error handling
 
 heap_ptr rts_internal_error(const char *msg) {
-  fputs("RTS: ",stderr);
+  fputs("[RTS] ",stderr);
   fputs(msg,stderr);
   fputc(10 ,stderr);
   exit(999);
@@ -242,6 +242,102 @@ heap_ptr rts_allocate_closure(uint64_t statidx, int env_size, int rem_arity) {
 }
 
 // -----------------------------------------------------------------------------
+// marshalling
+
+int rts_marshal_to_cstring(int nmax, char *target, heap_ptr source) {
+  heap_ptr ptr = source;
+  int i = 0;
+  while( i < nmax-1 && IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_Cons,2)) ) {
+    int c = TO_INT(ptr[1]);
+    target[i++] = c;
+    ptr = (heap_ptr)(ptr[2]);
+  }  
+  target[i] = 0;
+  return i;
+}
+
+heap_ptr rts_marshal_from_cstring(const char *str) {
+  char c = str[0];
+  if (c != 0) {
+    heap_ptr obj = rts_allocate_datacon(CON_Cons,2);
+    obj[1] = (uint64_t) CHR_LITERAL(c);
+    obj[2] = (uint64_t) rts_marshal_from_cstring(str+1);
+    return obj;
+  }
+  else return NIL;
+}
+
+// -----------------------------------------------------------------------------
+// generic print
+
+// closures can be refer to themselves, so we need some kind of "gas" 
+void rts_generic_print_limited(heap_ptr obj, int budget) {
+  switch(PTAG_OF(obj)) {
+    case PTAG_INT:   printf("%lld",(int64_t)(TO_INT(obj)));  break;
+    case PTAG_FUN:   printf("static_%lld",TO_STATIDX(obj));  break;
+    case PTAG_FILE:  printf("FILE(%p)",TO_FILE(obj));        break;
+    case PTAG_CON: {
+      // nullary constructor
+      int64_t word = (int64_t)obj;
+      int con_idx = (word & 0xffff) >> 3;
+      printf("%s/0",ConstructorNames[con_idx]);
+      break;
+    }
+    case PTAG_PTR: {
+      // fputs("TODO: implement generic print for heap objects",stdout);
+      uint64_t tagword = obj[0];
+      switch(tagword & 0x07) {
+        // data constructor
+        case HTAG_DCON: {
+          int con_idx   = (tagword & 0xffff) >> 3;
+          int con_arity = (tagword >> 16) & 0xffff;
+          printf("(%s/%d",ConstructorNames[con_idx],con_arity);
+          if (budget > 0) {
+            for(int i=0;i<con_arity;i++) {
+              printf(" ");
+              rts_generic_print_limited( (heap_ptr) obj[i+1] , budget-1);
+            }
+            printf(")");
+          }
+          break;
+        }
+        // closure
+        case HTAG_CLOS: {
+          int rem_arity = (tagword & 0xffff) >> 3;
+          int env_size  = (tagword >> 16) & 0xffff;
+          int stat_idx  = (tagword >> 32);
+          printf("CLOSURE(static_%d/%d/%d)",stat_idx,env_size,rem_arity);
+          if (budget > 0) {
+            for(int i=0;i<env_size;i++) {
+              if (i==0) printf("["); else printf(","); 
+              rts_generic_print_limited( (heap_ptr) obj[env_size-i] , budget-1);  // env is now in opposite order!
+            }
+            printf("]");
+          }
+          break;
+        }
+      }
+      break;
+    }
+    default: printf("<INVALID>"); break;
+  }
+}
+
+void rts_generic_print(heap_ptr obj) {
+  rts_generic_print_limited(obj,10);
+}
+
+void rts_generic_println(heap_ptr obj) {
+  rts_generic_print(obj);
+  printf("\n");
+}
+
+void rts_debug_println(const char *str, heap_ptr obj) {
+  printf("%s >>> ",str);
+  rts_generic_println(obj);
+}
+
+// -----------------------------------------------------------------------------
 // generic application
 
 heap_ptr rts_static_call(int statidx) {
@@ -259,26 +355,24 @@ heap_ptr rts_static_call(int statidx) {
 heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t *env, int nargs);
 heap_ptr rts_apply       (heap_ptr funobj, int nargs);
 
-// arguments are on the stack
+// arguments are on the stack, in *reverse order*, and environment is also in reverse order
 heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t *env, int nargs) {
+//printf("rts_apply_worker %d <%d> %d %d\n",static_arity,statfun,env_size,nargs);
   int ntotal = env_size + nargs;
   if (ntotal == static_arity) {
     // saturated call
-    stack_ptr frame = SP - nargs;
-    rts_stack_allocate( env_size );
-    // reorder stack
-    // from [args... SP] to [env... args... SP ]
-    for(int j=nargs-1;j>=0;j--)  { frame[env_size+j] = frame[j]; }
-    for(int i=0;i<env_size ;i++) { frame[i]          = env  [i]; }
+    // stack_ptr frame = SP - nargs;
+    stack_ptr mid   = rts_stack_allocate( env_size );
+    for(int i=0; i<env_size; i++) { mid[i] = env[i]; }
     heap_ptr result = rts_static_call( statfun );
     return result;
   }
   if (ntotal < static_arity) {
-    // unsaturated call
+    // undersaturated call
     stack_ptr frame = SP - nargs;
     heap_ptr obj = rts_allocate_closure( statfun , ntotal , static_arity - ntotal);
-    for(int i=0;i<env_size ;i++) { obj[i+1]          = env  [i]; }
-    for(int j=0;j<nargs    ;j++) { obj[env_size+1+j] = frame[j]; }
+    for(int j=0; j<nargs   ; j++) { obj[      j+1] = frame[j]; }
+    for(int i=0; i<env_size; i++) { obj[nargs+i+1] = env  [i]; }
     SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
     return obj;
   }
@@ -286,17 +380,9 @@ heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t 
     // oversaturated call
     int this_arity = static_arity - env_size;
     int rem_arity  = ntotal - static_arity;
-    // even more tricky reordering of the stack:
-    // from [args... extraargs... SP] to [extraargs... env... args... SP]
-    // then after the first call it becomes [extraargs... SP]
-    stack_ptr frame = SP - nargs;
-    rts_stack_allocate( env_size );
-    stack_ptr tmp = rts_stack_allocate( rem_arity );
-    for(int j=rem_arity -1;j>=0;j--) { tmp[j] = frame[this_arity+j]; }
-    for(int j=this_arity-1;j>=0;j--) { frame[rem_arity+env_size+j] = frame[j]; }
-    for(int i=0;i<env_size     ;i++) { frame[rem_arity         +i] = env  [i]; }
-    for(int j=rem_arity -1;j>=0;j--) { frame[j] = tmp[j]; }
-    SP = tmp;
+    // stack_ptr frame = SP - nargs;
+    heap_ptr mid = rts_stack_allocate( env_size );
+    for(int i=0; i<env_size; i++) { mid[i] = env[i]; }
     heap_ptr result1 = rts_static_call( statfun );
     heap_ptr result2 = rts_apply( result1 , rem_arity ) ;
     return result2;
@@ -310,14 +396,10 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
 
     // closure or data constructor
     case PTAG_PTR: { 
-//printf("apply to heap object\n");
-//printf("ptr = %p\n",funobj);
       uint64_t tagword = funobj[0];
-//printf("tag word = %lld\n",tagword);
       switch(tagword & 0x07) {
         // closure
         case HTAG_CLOS: {
-//printf("apply to closure\n");
           int rem_arity = (tagword & 0xffff) >> 3;
           int env_size  = (tagword >> 16) & 0xffff;
           int statfun   = (tagword >> 32);
@@ -325,12 +407,11 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
         }
         // data constructor
         case HTAG_DCON: {
-//printf("apply to data constructor\n");
           int con       = (tagword & 0xffff) >> 3;
           int old_arity = (tagword >> 16) & 0xffff;
           heap_ptr obj = rts_allocate_datacon(con, old_arity+nargs);
-          for(int i=0;i<old_arity;i++) { obj[i+1]           = funobj[i+1]; }
-          for(int j=0;j<nargs    ;j++) { obj[old_arity+1+j] = args  [j];   }
+          for(int i=0;i<old_arity;i++) { obj[i+1]           = funobj[i+1];        }
+          for(int j=0;j<nargs    ;j++) { obj[old_arity+1+j] = args  [nargs-j-1];  }  // arguments are opposite order, but constructors fields are not?
           SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
           return obj;
         }
@@ -344,23 +425,22 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
 
     // nullary constructor
     case PTAG_CON: {
-//printf("apply to nullary con\n");
       int con = ((int64_t)funobj) >> 3;
       heap_ptr obj = rts_allocate_datacon(con,nargs);
-      for(int i=0;i<nargs;i++) { obj[i+1] = args[i]; }
+      for(int i=0;i<nargs;i++) { obj[i+1] = args[nargs-i-1]; }
       SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
       return obj;
     }
 
     // static function
     case PTAG_FUN: {
-//printf("apply to static fun\n");
       int static_idx = ((int64_t)funobj) >> 3;
       int   arity  = StaticFunArities [static_idx];
       return rts_apply_worker( arity, static_idx, 0, NULL, nargs);
     }
 
     default:
+      // rts_generic_println(funobj);
       return rts_internal_error("application to a literal constant");
   }
 }
@@ -419,7 +499,7 @@ int rts_generic_eq(heap_ptr arg1, heap_ptr arg2) {
       if (arg1[0] != arg2[0]) return false;
       int tagword = arg1[0];
       int tag = tagword & 0x07;
-      if ((tag != 0) && (tag != 4)) return false;     // invalid tag
+      if ((tag != 0) && (tag != 4)) rts_internal_error("fatal: generic equality: invalid heap object");
       int size  = (tagword >> 16) & 0xffff;
       for(int i=0;i<size;i++) { if (!rts_generic_eq( (heap_ptr)arg1[i+1] , (heap_ptr)arg2[i+1] )) return false; }
       return true;
@@ -428,108 +508,6 @@ int rts_generic_eq(heap_ptr arg1, heap_ptr arg2) {
     default:
       return false;     // one is real heap object, the other is a machine word
   } 
-}
-
-// -----------------------------------------------------------------------------
-// marshalling
-
-int rts_marshal_to_cstring(int nmax, char *target, heap_ptr source) {
-  heap_ptr ptr = source;
-  int i = 0;
-  while( i < nmax-1 && IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_Cons,2)) ) {
-    int c = TO_INT(ptr[1]);
-    target[i++] = c;
-    ptr = (heap_ptr)(ptr[2]);
-  }  
-  target[i] = 0;
-  return i;
-}
-
-heap_ptr rts_marshal_from_cstring(const char *str) {
-  char c = str[0];
-  if (c != 0) {
-    heap_ptr obj = rts_allocate_datacon(CON_Cons,2);
-    obj[1] = (uint64_t) CHR_LITERAL(c);
-    obj[2] = (uint64_t) rts_marshal_from_cstring(str+1);
-    return obj;
-  }
-  else return NIL;
-}
-
-// -----------------------------------------------------------------------------
-// generic print
-
-// closures can be refer to themselves, so we need some kind of "gas" 
-void rts_generic_print_limited(heap_ptr obj, int budget) {
-  switch(PTAG_OF(obj)) {
-    case PTAG_INT:
-      printf("%lld",(int64_t)(TO_INT(obj)));
-      break;
-    case PTAG_FUN:
-      printf("static_%lld",TO_STATIDX(obj));
-      break;
-    case PTAG_FILE:
-      printf("FILE(%p)",TO_FILE(obj));
-      break;
-    case PTAG_CON: {
-      // nullary constructor
-      int64_t word = (int64_t)obj;
-      int con_idx = (word & 0xffff) >> 3;
-      printf("%s/0",ConstructorNames[con_idx]);
-      break;
-    }
-    case PTAG_PTR: {
-      // fputs("TODO: implement generic print for heap objects",stdout);
-      uint64_t tagword = obj[0];
-      switch(tagword & 0x07) {
-        // data constructor
-        case HTAG_DCON: {
-          int con_idx   = (tagword & 0xffff) >> 3;
-          int con_arity = (tagword >> 16) & 0xffff;
-          printf("(%s/%d",ConstructorNames[con_idx],con_arity);
-          if (budget > 0) {
-            for(int i=0;i<con_arity;i++) {
-              printf(" ");
-              rts_generic_print_limited( (heap_ptr) obj[i+1] , budget-1);
-            }
-            printf(")");
-          }
-          break;
-        }
-        // closure
-        case HTAG_CLOS: {
-          int rem_arity = (tagword & 0xffff) >> 3;
-          int env_size  = (tagword >> 16) & 0xffff;
-          int stat_idx  = (tagword >> 32);
-          printf("CLOSURE(static_%d/%d/%d)",stat_idx,env_size,rem_arity);
-          if (budget > 0) {
-            for(int i=0;i<env_size;i++) {
-              if (i==0) printf("["); else printf(","); 
-              rts_generic_print_limited( (heap_ptr) obj[i+1] , budget-1);
-            }
-            printf("]");
-          }
-          break;
-        }
-      }
-      break;
-    }
-    default: printf("<INVALID>"); break;
-  }
-}
-
-void rts_generic_print(heap_ptr obj) {
-  rts_generic_print_limited(obj,10);
-}
-
-void rts_generic_println(heap_ptr obj) {
-  rts_generic_print(obj);
-  printf("\n");
-}
-
-void rts_debug_println(const char *str, heap_ptr obj) {
-  printf("%s >>> ",str);
-  rts_generic_println(obj);
 }
 
 // -----------------------------------------------------------------------------
@@ -565,8 +543,7 @@ void rts_initialize(int argc, char **argv) {
   static_stack = (heap_ptr) malloc_words( NStatic );
   for(int i=0;i<NStatic;i++) {
     int   arity  = StaticFunArities [i];
-    static_stack[i] = (uint64_t) FROM_STATIDX(i);                          
-    // (uint64_t) rts_allocate_closure(i,0,arity);   // thunk
+    static_stack[i] = (uint64_t) FROM_STATIDX(i); 
   }
 
 //   // evaluate thunks (this includes functions which looks like CAFs!!!)
@@ -710,10 +687,10 @@ char *file_modes[] = { "r" , "w" , "a" , "rw" };
 
 const char* c_file_mode_str(heap_ptr con) { 
   switch ((uint64_t)(con)) {
-    case ( 4 + 8 * CON_ReadMode      ): return file_modes[0];
-    case ( 4 + 8 * CON_WriteMode     ): return file_modes[1];
-    case ( 4 + 8 * CON_AppendMode    ): return file_modes[2];
-    case ( 4 + 8 * CON_ReadWriteMode ): return file_modes[3];
+    case ( PTAG_CON + (CON_ReadMode     <<3) ): return file_modes[0];
+    case ( PTAG_CON + (CON_WriteMode    <<3) ): return file_modes[1];
+    case ( PTAG_CON + (CON_AppendMode   <<3) ): return file_modes[2];
+    case ( PTAG_CON + (CON_ReadWriteMode<<3) ): return file_modes[3];
   }
   rts_internal_error("invalid file IO mode"); return NULL;
 }

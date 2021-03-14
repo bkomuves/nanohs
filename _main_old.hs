@@ -20,11 +20,16 @@ import PrimGHC
 import Nano hiding ( main )
 
 import Base 
+import Containers
 import Types
 import PrimOps
 import DataCon
 import Syntax
 import Parser
+import Core
+import ScopeCheck
+import Closure
+import CodeGen
 
 --------------------------------------------------------------------------------
 
