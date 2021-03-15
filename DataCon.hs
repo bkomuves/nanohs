@@ -93,8 +93,8 @@ collectDataConsWorker expr = go expr where
     { Just k  -> sreturn Unit
     ; Nothing -> sput (Pair (inc n) (trieInsert name n table)) } })
   ; go expr = case expr of
-    { VarE name -> case isDCon name of { False -> sreturn Unit ; True -> insert name }
-    ; StrE k    -> sreturn Unit
+    { VarE lnam   -> let { name = located lnam } in case isDCon name of { False -> sreturn Unit ; True -> insert name }
+    ; StrE k      -> sreturn Unit
     ; AppE e1 e2  -> sseq (go e1) (go e2)
     ; LamE _ body -> go body
     ; LetE defs body -> goLet defs body

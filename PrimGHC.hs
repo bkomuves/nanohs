@@ -226,6 +226,9 @@ _fromGhcString = _fromGhcList
 _toGhcString :: String -> Prelude.String
 _toGhcString = _toGhcList
 
+show :: Show a => a -> String
+show x = _fromGhcString (Prelude.show x)
+
 instance Show a => Show (List a) where show list = Prelude.show (_toGhcList list)
 
 instance IsString (List Char) where fromString = _fromGhcString

@@ -18,13 +18,13 @@ import PrimGHC
 import Base
 import Containers
 import Types
-import Core
+-- import Core
 import PrimOps
 
 {-% include "Base.hs"        %-}
 {-% include "Containers.hs"  %-}
 {-% include "Types.hs"       %-}
-{-% include "Core.hs"        %-}
+-- {-% include "Core.hs"        %-}
 {-% include "PrimOps.hs"     %-}
 
 --------------------------------------------------------------------------------
@@ -56,7 +56,7 @@ mbDefin toplev = case toplev of { TopDefin def -> Just def ; _ -> Nothing }
 --------------------------------------------------------------------------------
 
 data Expr
-  = VarE  Name
+  = VarE  LName
   | AppE  Expr Expr
   | LamE  Name Expr
   | LetE  (List DefinE) Expr
@@ -76,6 +76,9 @@ data BranchE
 -- data BranchE
 --   = BranchE Pattern Expr
 --   deriving Show
+
+isLambdaExpr :: Expr -> Bool
+isLambdaExpr expr = case expr of { LamE _ _ -> True ; _ -> False }
 
 lamsE :: List Name -> Expr -> Expr
 lamsE args body = case args of { Nil -> body ; Cons v vs -> LamE v (lamsE vs body) }
@@ -119,7 +122,7 @@ patternHead pat = case pat of
 freeVars :: Expr -> TrieSet
 freeVars expr = go trieEmpty expr where
   { go bound expr = case expr of
-    { VarE nam       -> case trieMember nam bound of { False -> trieSetSingleton nam ; _ -> trieEmpty }
+    { VarE lname     -> let { nam = located lname } in case trieMember nam bound of { False -> trieSetSingleton nam ; _ -> trieEmpty }
     ; AppE e1 e2     -> trieUnion (go bound e1) (go bound e2)
     ; LamE v body    -> go (trieSetInsert v bound) body
     ; LetE defs body -> goLets   bound defs body
@@ -153,12 +156,12 @@ tmpVars = ["x1","x2","x3","x4","x5"]
 -- tmpVars = map (\i -> append "x" (showInt i)) (rangeFrom 1 5)
 
 -- | Saturate primop application
-saturatePrimApp :: PrimOp -> List Expr -> Expr
-saturatePrimApp primop args = case primop of { PrimOp arity prim -> case compare nargs arity of
+saturatePrimApp :: Location -> PrimOp -> List Expr -> Expr
+saturatePrimApp loc primop args = case primop of { PrimOp arity prim -> case compare nargs arity of
   { EQ ->        PrimE primop args
   ; GT -> appsE (PrimE primop (take arity args)) (drop arity args)
   ; LT -> let { vars = take (minus arity nargs) tmpVars }
-          in  lamsE vars (PrimE primop (append args (map VarE vars)))
+          in  lamsE vars (PrimE primop (append args (map (\v -> VarE (Located loc v)) vars)))
   } }
   where { nargs = length args }
 
@@ -169,15 +172,15 @@ recogPrimApps prg = map (fmapDefin recogPrimApps1) prg
 -- | Recognize primop applications, and saturate them if necessary
 recogPrimApps1 :: Expr -> Expr
 recogPrimApps1 = go where
-  { goVar name = case trieLookup name primops of
-      { Nothing        -> VarE name
-      ; Just primop    -> saturatePrimApp primop [] }
+  { goVar lname = case trieLookup (located lname) primops of
+      { Nothing        -> VarE lname
+      ; Just primop    -> saturatePrimApp (location lname) primop [] }
   ; go expr = case expr of
-      { VarE name      -> goVar name
+      { VarE lname      -> goVar lname
       ; AppE _ _       -> case recogAppsE expr of { Cons f args -> case f of
-          { VarE n       -> case trieLookup n primops of
-              { Nothing     -> appsE (VarE n)         (map go args)
-              ; Just primop -> saturatePrimApp primop (map go args) }
+          { VarE ln      -> case trieLookup (located ln) primops of
+              { Nothing     -> appsE (VarE ln)                      (map go args)
+              ; Just primop -> saturatePrimApp (location ln) primop (map go args) }
           ; _            -> appsE (go    f) (map go args) } }
       ; LamE arg  body -> LamE  arg  (go body)
       ; LetE defs body -> LetE  (map goDefin defs) (go body)
@@ -224,3 +227,5 @@ extractStringConstants1 expr = go expr where
     ; DefaultE         rhs -> sfmap (DefaultE        ) (go rhs) } }
 
 --------------------------------------------------------------------------------
+
+

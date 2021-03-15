@@ -393,37 +393,39 @@ moduleP = pbind (keywordP "module") (\_ ->
           pbind (many1 anyToken   ) (\toks -> preturn (TopModule toks) ))
 
 definP :: Parse DefinE
-definP = pbind varP              (\name ->
-         pbind (many varP)       (\args ->
-         pbind (specP EqualSign) (\_    ->
-         pbind exprP             (\body -> preturn (Defin name (lamsE args body)) ))))
+definP f p t = 
+  pbind varP              (\name ->
+  pbind (many varP)       (\args ->
+  pbind (specP EqualSign) (\_    ->
+  pbind exprP             (\body -> preturn (Defin name (lamsE args body)) ))))  f p t 
 
 exprP :: Parse Expr
-exprP = pbind nakedExprP             (\expr ->
-        pbind (optional whereBlockP) (\mb   ->
-        preturn (case mb of { Nothing -> expr ; Just defs -> RecE defs expr } )))
+exprP f p t = 
+  pbind nakedExprP             (\expr ->
+  pbind (optional whereBlockP) (\mb   ->
+  preturn (case mb of { Nothing -> expr ; Just defs -> RecE defs expr } )))  f p t 
 
 whereBlockP :: Parse (List DefinE)
-whereBlockP = pbind (keywordP "where") (\_ -> blockP)
+whereBlockP f p t = pbind (keywordP "where") (\_ -> blockP) f p t 
 
 -- | Here \"naked\" means without a where block
 nakedExprP :: Parse Expr
-nakedExprP = choice
+nakedExprP f p t = choice
   [ lamExprP
   , pfmap listAppsE (many1 atomP)
-  ]
+  ]  f p t 
 
 -- | We need an explicit eta-expansion here so that it doesn't loop in GHCi
 -- (and probably also itself)
 atomP :: Parse Expr
-atomP what = choice
+atomP f p t = choice
   [ inParensP exprP
   , pfmap LitE  literalP
   , pfmap ListE listExprP
   , caseExprP
   , letsExprP , letRecExprP
-  , pfmap VarE varP
-  ] what
+  , pfmap VarE (locatedL varP)
+  ] f p t 
 
 specP :: Special -> Parse Special
 specP spec = preplace spec (token (SpecTok spec))
@@ -458,42 +460,44 @@ tupleExprP :: Parse (List Expr   )
 blockP     :: Parse (List DefinE )
 branchesP  :: Parse (List BranchE)
 
-listExprP  = pbind (specP LBracket) (\_ -> sepEndBy (specP Comma    ) (specP RBracket) exprP  )
-tupleExprP = pbind (specP LParen  ) (\_ -> sepEndBy (specP Comma    ) (specP RParen  ) exprP  )
-blockP     = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) definP )
-branchesP  = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) branchP)
+listExprP  f p t = pbind (specP LBracket) (\_ -> sepEndBy (specP Comma    ) (specP RBracket) exprP  ) f p t
+tupleExprP f p t = pbind (specP LParen  ) (\_ -> sepEndBy (specP Comma    ) (specP RParen  ) exprP  ) f p t
+blockP     f p t = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) definP ) f p t
+branchesP  f p t = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) branchP) f p t
 
 patternP :: Parse Pattern
-patternP = naked where
-  { naked what = choice [ wild , var , inParensP patternP , apps ] what
-  ; safe  what = choice [ wild , var , inParensP patternP , con  ] what
+patternP f p t = naked f p t where
+  { naked f p t = choice [ wild , var , inParensP patternP , apps ] f p t
+  ; safe  f p t = choice [ wild , var , inParensP patternP , con  ] f p t
   ; wild  = pbind (keywordP "_" ) (\_    -> preturn  WildP  )
   ; var   = pbind (accept mbVarL) (\v    -> preturn (VarP v))
   ; con   = pbind  conP           (\con  -> preturn (AppP con Nil))
   ; apps  = pbind  conP           (\con  ->
             pbind (many safe    ) (\args -> preturn (AppP con args)))
-  }
+  }  
 
 branchP :: Parse BranchE
-branchP = alternative defaultBranchP branchP'
+branchP f p t = alternative defaultBranchP branchP' f p t
 
 branchP' :: Parse BranchE
-branchP' = pbind conP          (\con  ->
-           pbind (many varP  ) (\args ->
-           pbind (specP Arrow) (\_    ->
-           pbind (exprP      ) (\body -> preturn (BranchE con args body)))))
+branchP' f p t = 
+  pbind conP          (\con  ->
+  pbind (many varP  ) (\args ->
+  pbind (specP Arrow) (\_    ->
+  pbind (exprP      ) (\body -> preturn (BranchE con args body))))) f p t 
 
 defaultBranchP :: Parse BranchE
-defaultBranchP = pbind (keywordP "_") (\_    ->
-                 pbind (specP Arrow ) (\_    ->
-                 pbind (exprP       ) (\body -> preturn (DefaultE body))))
+defaultBranchP f p t 
+  = pbind (keywordP "_") (\_    ->
+    pbind (specP Arrow ) (\_    ->
+    pbind (exprP       ) (\body -> preturn (DefaultE body)))) f p t 
 
 lamExprP :: Parse Expr
-lamExprP =
+lamExprP f p t  =
   pbind (specP Lambda) (\_    ->
   pbind (many1 varP  ) (\args ->
   pbind (specP Arrow ) (\_    ->
-  pbind exprP          (\body -> preturn (lamsE args body)))))
+  pbind exprP          (\body -> preturn (lamsE args body))))) f p t 
 
 letExprP' :: (List DefinE -> Expr -> Expr) -> String -> Parse Expr
 letExprP' con letkw = pbind (keywordP letkw) (\_    ->
@@ -503,16 +507,17 @@ letExprP' con letkw = pbind (keywordP letkw) (\_    ->
 
 -- | Non-recursive let
 letsExprP :: Parse Expr
-letsExprP = letExprP' LetE "let_"
+letsExprP f p t = letExprP' LetE "let_" f p t 
 
 -- | Recursive let
 letRecExprP :: Parse Expr
-letRecExprP = letExprP' RecE "let"
+letRecExprP f p t = letExprP' RecE "let" f p t 
 
 caseExprP :: Parse Expr
-caseExprP = pbind (keywordP "case") (\_    ->
-            pbind (exprP          ) (\expr ->
-            pbind (keywordP "of"  ) (\_    ->
-            pbind (branchesP      ) (\brs  -> preturn (CaseE expr brs)))))
+caseExprP f p t  = 
+  pbind (keywordP "case") (\_    ->
+  pbind (exprP          ) (\expr ->
+  pbind (keywordP "of"  ) (\_    ->
+  pbind (branchesP      ) (\brs  -> preturn (CaseE expr brs))))) f p t 
 
 --------------------------------------------------------------------------------

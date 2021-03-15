@@ -23,6 +23,7 @@ import PrimOps
 import DataCon
 import Syntax
 import Parser
+import Dependency
 import Core
 import ScopeCheck
 import Closure
@@ -36,6 +37,7 @@ import Eval
 {-% include "DataCon.hs"    %-}
 {-% include "Syntax.hs"     %-}
 {-% include "Parser.hs"     %-}
+{-% include "Dependency.hs" %-}
 {-% include "Core.hs"       %-}
 {-% include "ScopeCheck.hs" %-}
 {-% include "Closure.hs"    %-}
@@ -69,6 +71,7 @@ runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case pr
       { lprogram = coreProgramToLifted coreprg
       ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
       } in writeLines outputFn code )})
+      -- } in ioforM_ code putStrLn )})
 
 runInterpreter :: FilePath -> IO Unit
 runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
@@ -87,8 +90,9 @@ loadModules :: FilePath -> IO ProgramData
 loadModules inputFn =
   iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> (let 
       { defins0  = catMaybes (map mbDefin toplevs)
-      ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins -> let 
-        { dconTrie = collectDataCons defins
+      ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins1 -> let 
+        { defins   = reorderProgram defins1
+        ; dconTrie = collectDataCons defins
         ; coreprg  = programToCoreProgram defins
         } in ioreturn (PrgData strlits dconTrie coreprg) })}) 
 

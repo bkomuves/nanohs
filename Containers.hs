@@ -114,6 +114,12 @@ trieLookup str trie = case trie of { Node mb table -> case str of { Nil -> mb
   ; Cons x xs -> case mapLookup (ord x) table of { Nothing -> Nothing
     ; Just trie' -> trieLookup xs trie' } } }
 
+trieLookupDefault :: a -> String -> Trie a -> a
+trieLookupDefault def str trie = case trie of { Node mb table -> case str of 
+  { Nil -> case mb of { Just y -> y ; Nothing -> def } 
+  ; Cons x xs -> case mapLookup (ord x) table of { Nothing -> def
+    ; Just trie' -> trieLookupDefault def xs trie' } } }
+
 trieMember :: String -> Trie a -> Bool
 trieMember str trie = isJust (trieLookup str trie)
 
@@ -135,6 +141,11 @@ trieDelete str trie = case trie of { Node mb table -> case str of
   { Nil -> Node Nothing table
   ; Cons x xs -> Node mb (mapAdjust (ord x) (trieDelete xs) table) } }
 
+trieAlter :: (Maybe a -> Maybe a) -> String -> Trie a -> Trie a 
+trieAlter f string trie = case f (trieLookup string trie) of
+  { Nothing -> trieDelete string   trie
+  ; Just y  -> trieInsert string y trie }
+
 trieUnion :: Trie a -> Trie a -> Trie a
 trieUnion trie1 trie2 = go trie2 (trieToList trie1) where
   { go trie list = case list of { Nil -> trie ; Cons pair rest -> case pair of { Pair key val ->
@@ -151,12 +162,20 @@ trieFromList list = foldr f trieEmpty list where { f kv trie = case kv of { Pair
 trieFromListUnique :: (String -> String) -> List (Pair String a) -> Trie a
 trieFromListUnique errmsg list = foldr f trieEmpty list where { f kv trie = case kv of { Pair k v -> trieInsertNew (errmsg k) k v trie } } 
 
+trieBuild :: (a -> b) -> (a -> b -> b) -> List (Pair String a) -> Trie b
+trieBuild f g xys = foldl insert trieEmpty xys where
+  { insert old pair = case pair of { Pair k x -> trieAlter (h x) k old }
+  ; h x mb = case mb of { Nothing -> Just (f x) ; Just y -> Just (g x y) } }  
+
 trieToList :: Trie a -> List (Pair String a)
 trieToList trie = go trie where { go trie = case trie of { Node mb table -> let
   { f pair = case pair of { Pair k trie' -> map (prepend (chr k)) (go trie') }
   ; rest = concat (map f table)
   ; prepend x pair = case pair of { Pair xs y -> Pair (Cons x xs) y } }
   in case mb of { Nothing -> rest ; Just y -> Cons (Pair Nil y) rest } } }
+
+trieKeys :: Trie a -> List String
+trieKeys trie = map fst (trieToList trie)
 
 --------------------------------------------------------------------------------
 -- ** Sets of strings

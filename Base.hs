@@ -76,6 +76,12 @@ gt x y = lt y x
 ge :: Int -> Int -> Bool
 ge x y = le y x
 
+min :: Int -> Int -> Int
+min x y = ifte (le x y) x y
+
+max :: Int -> Int -> Int
+max x y = ifte (le x y) y x
+
 data Ordering = LT | EQ | GT deriving Show
 
 compare :: Int -> Int -> Ordering
@@ -198,13 +204,11 @@ isNil :: List a -> Bool
 isNil ls = case ls of { Nil -> True ; Cons _ _ -> False }
 
 mbSingleton :: List a -> Maybe a
-mbSingleton list = let { msg = "non-singleton list" } in case list of
-  { Cons x xs -> case xs of { Nil -> Just x ; _ -> error msg } ; Nil -> error msg }
+mbSingleton list = case list of { Cons x xs -> case xs of { Nil -> Just x ; _ -> Nothing } ; Nil -> Nothing }
 
 mbPair :: List a -> Maybe (Pair a a)
-mbPair list = let { msg = "non-two-element list" } in case list of
-  { Cons x xs -> case xs of { Cons y ys -> case ys of { Nil -> Just (Pair x y) ; _ -> error msg }
-     ; Nil -> error msg } ; Nil -> error msg }
+mbPair list = case list of { Cons x xs -> case xs of { Cons y ys -> case ys of 
+  { Nil -> Just (Pair x y) ; _ -> Nothing } ; Nil -> Nothing } ; Nil -> Nothing }
 
 length :: List a -> Int
 length ls = case ls of { Nil -> 0 ; Cons _ xs -> inc (length xs) }
@@ -217,8 +221,14 @@ index k ls = case ls of
 elem :: Eq a => a -> List a -> Bool
 elem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (geq x y) True (go ys) } }
 
+intElem :: Int -> List Int -> Bool
+intElem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (eq x y) True (go ys) } }
+
 charElem :: Char -> List Char -> Bool
 charElem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (ceq x y) True (go ys) } }
+
+stringElem :: String -> List String -> Bool
+stringElem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (stringEq x y) True (go ys) } }
 
 foldl :: (a -> b -> a) -> (a -> List b -> a)
 foldl f x0 list = go x0 list where
@@ -563,6 +573,9 @@ sseq p q = sbind p (\_ -> q)
 
 sseq3 :: State s a -> State s b -> State s c -> State s c
 sseq3 p q r = sseq p (sseq q r)
+
+sseq4 :: State s a -> State s b -> State s c -> State s d -> State s d
+sseq4 p q r s = sseq p (sseq q (sseq r s))
 
 sget :: State s s
 sget = \s -> Pair s s

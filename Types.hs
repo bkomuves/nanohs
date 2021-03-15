@@ -46,6 +46,21 @@ type Static = Int
 type DataConTable = Trie Con
 
 --------------------------------------------------------------------------------
+-- ** Named things
+
+-- | We want to keep names for debugging \/ pretty printing
+data Named a = Named Name a deriving Show
+
+nfmap :: (a -> b) -> Named a -> Named b
+nfmap f named = case named of { Named name x -> Named name (f x) }
+
+forgetName :: Named a -> a
+forgetName x = case x of { Named _ y -> y }
+
+nameOf :: Named a -> String
+nameOf x = case x of { Named n _ -> n }
+
+--------------------------------------------------------------------------------
 -- ** Definitions
 
 -- | Definitions
@@ -60,22 +75,10 @@ definedName defin = case defin of { Defin n _ -> n }
 definedWhat :: Defin a -> a
 definedWhat defin = case defin of { Defin _ e -> e }
 
+definToPair :: Defin a -> Pair Name a
+definToPair def = case def of { Defin n rhs -> Pair n rhs }
+
 type Program a = List (Defin a)
-
---------------------------------------------------------------------------------
--- ** Named things
-
--- | We want to keep names for debugging \/ pretty printing
-data Named a = Named Name a deriving Show
-
-nfmap :: (a -> b) -> Named a -> Named b
-nfmap f named = case named of { Named name x -> Named name (f x) }
-
-forgetName :: Named a -> a
-forgetName x = case x of { Named _ y -> y }
-
-nameOf :: Named a -> String
-nameOf x = case x of { Named n _ -> n }
 
 --------------------------------------------------------------------------------
 -- ** Literals
@@ -159,11 +162,20 @@ showSrcPos :: SrcPos -> String
 showSrcPos pos = case pos of { SrcPos row col ->
   append ("line ") (append3 (showNat row) (", column ") (showNat col)) }
 
+showSrcPos_ :: SrcPos -> String
+showSrcPos_ pos = case pos of { SrcPos row col -> (append3 (showNat row) ":" (showNat col)) }
+
 showSrcPos' :: FilePath -> SrcPos -> String
 showSrcPos' fname pos = append3 "file " (doubleQuoteString fname) (append ", " (showSrcPos pos))
 
+showLocation :: Location -> String
+showLocation loc = case loc of { Loc fname pos1 pos2 -> concat
+  [ "file " , doubleQuoteString fname , ", " , showSrcPos_ pos1 , "--" , showSrcPos_ pos2 ] }
+
 data Location  = Loc FilePath SrcPos SrcPos deriving Show
 data Located a = Located Location a         deriving Show
+
+type LName = Located Name
 
 locFn    loc = case loc of { Loc fn _ _    -> fn   }
 locStart loc = case loc of { Loc _  pos1 _ -> pos1 }
@@ -174,6 +186,9 @@ located  lx = case lx of { Located _   x -> x   }
 
 locatedStart = compose locStart location
 locatedEnd   = compose locEnd   location
+
+fakeLocation  = Loc "<source>" (SrcPos 0 0) (SrcPos 0 0)
+fakeLocated x = Located fakeLocation x
 
 --------------------------------------------------------------------------------
 -- ** Tokens

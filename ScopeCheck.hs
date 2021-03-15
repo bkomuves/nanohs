@@ -68,23 +68,23 @@ data VarL
 
 type Scope = Trie VarL
 
-lookupVar :: Level -> Scope -> String -> Var
-lookupVar level scope name =
+lookupVar :: Level -> Scope -> Location -> String -> Var
+lookupVar level scope loc name =
   case trieLookup name scope of 
     { Just v  -> case v of { LevL k -> IdxV (dec (minus level k)) ; TopL j -> TopV j } 
-    ; Nothing -> error (append3 "variable name " (quoteString name) " not in scope") }
+    ; Nothing -> error (concat [ "variable name " , quoteString name , " not in scope, at " , showLocation loc ])}
 
 lookupCon :: DataConTable -> String -> Con
 lookupCon dcontable name =
   case trieLookup name dcontable of { Just con -> con ; Nothing ->
-    error (append3 "fatal error: constructor" (quoteString name) " not found") }
+    error (concat [ "fatal error: constructor " , quoteString name , " not found" ])}
 
 scopeCheck :: DataConTable -> Scope -> Expr -> Term
 scopeCheck dcontable = go 0 where
   { mbAtom level scope expr =  case expr of
-      { VarE  name -> case isDCon name of
-        { True  -> Just (ConA (Named name (lookupCon dcontable   name)))
-        ; False -> Just (VarA (Named name (lookupVar level scope name))) }
+      { VarE  lname -> case lname of { Located loc name -> case isDCon name of
+        { True  -> Just (ConA (Named name (lookupCon dcontable       name)))
+        ; False -> Just (VarA (Named name (lookupVar level scope loc name))) }}
       ; LitE  lit -> case lit of
         { StrL cs -> Nothing
         ; _       -> Just (KstA lit) }
@@ -113,7 +113,7 @@ scopeCheck dcontable = go 0 where
         ; _       -> AtmT (KstA lit) }
     ; ListE exprs -> case exprs of 
         { Nil       -> AtmT (ConA (Named "Nil" con_Nil))
-        ; Cons e es -> go level scope (AppE (AppE (VarE "Cons") e) (ListE es)) }
+        ; Cons e es -> go level scope (AppE (AppE (VarE (fakeLocated "Cons")) e) (ListE es)) }
     ; PrimE prim args -> case prim of { PrimOp _arity pri -> case isLazyPrim pri of 
         { False -> goPrim prim 0 level scope Nil args 
       --  { False -> goArgs level scope args (PriT prim 
