@@ -1,6 +1,7 @@
 :set -XMagicHash
 :set -XStrict
 :set -XFlexibleInstances
+:set -XFlexibleContexts
 :set -XTypeSynonymInstances
 :set -XOverloadedLists
 :set -XOverloadedStrings

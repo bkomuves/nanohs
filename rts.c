@@ -29,8 +29,10 @@ typedef heap_ptr generic_fun_t();
 // We would need to align static function pointers, so we just introduce
 // an extra indirection and use indices for simplicity. We also need the arities.
 int       NStatic;
+int       NTopLev;
 void    **StaticFunPointers;
 int      *StaticFunArities;
+int      *TopLevelIndices;
 char    **ConstructorNames;
 char    **StaticStringTable;
 stack_ptr static_stack;
@@ -447,45 +449,6 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
 }
 
 // -----------------------------------------------------------------------------
-// force thunks (only used when there are non-lambdas present in letrec)
-
-heap_ptr rts_force_value(heap_ptr obj) {
-  switch(PTAG_OF(obj)) {
-    // closure or data constructor
-    case PTAG_PTR: {
-      uint64_t tagword = obj[0];
-      switch(tagword & 0x07) {
-        // closure
-        case HTAG_CLOS: {
-          int rem_arity = (tagword & 0xffff) >> 3;
-          int env_size  = (tagword >> 16) & 0xffff;
-          if (rem_arity > 0) { return obj; } else {
-            int statfun  = (tagword >> 32);
-            return rts_apply_worker( env_size, statfun, env_size, obj+1, 0);
-          } }
-        // data con
-        default: return obj;
-    } }
-    // static function (still can be a CAF)
-    case PTAG_FUN: { 
-      int static_idx = ((int64_t)obj) >> 3;
-      int arity = StaticFunArities[static_idx];
-      if (arity>0) { return obj; } else { 
-        return rts_static_call(static_idx);   // CAF
-    } }
-    // anything else
-    default: return obj;
-  }
-}
-
-heap_ptr rts_force_thunk_at(stack_ptr ptr) {
-  heap_ptr old = (heap_ptr)ptr[0];
-  heap_ptr val = rts_force_value(old);
-  ptr[0] = (uint64_t) val;
-  return val;
-}
-
-// -----------------------------------------------------------------------------
 // generic equality
 
 int rts_generic_eq(heap_ptr arg1, heap_ptr arg2) {
@@ -543,21 +506,20 @@ void rts_initialize(int argc, char **argv) {
   // letrec we couldn't really optimize the fully static function calls?
   static_stack = (heap_ptr) malloc_words( NStatic );
   for(int i=0;i<NStatic;i++) {
-    // int arity  = StaticFunArities [i];
-    static_stack[i] = (uint64_t) FROM_STATIDX(i); 
+    static_stack[i] = (uint64_t) FROM_STATIDX(i);
   }
 
-//   // evaluate thunks (this includes functions which looks like CAFs!!!)
-//   for(int i=0;i<NStatic;i++) {
-//     // printf("%d\n",i);
-//     int   arity  = StaticFunArities [i];
-//     if (arity == 0) { 
-//       // thunk; we have to evaluate it
-// //      printf("evaluating static thunk %d\n",i);
-//       heap_ptr obj = rts_static_call(i); // funptr);
-//       static_stack[i] = (uint64_t)obj;   
-//     }
-//   } 
+  // evaluate top-level non-lambdas (they cannot be recursive if the compiler works correctly)
+  for(int k=0;k<NTopLev;k++) {
+    int i = TopLevelIndices[k];
+    if (i>=0) {                              // we need to skip main, which is denoted by -1
+      int arity  = StaticFunArities[i];
+      if (arity == 0) {
+        // printf("toplevel #%d = static #%d\n",k,i);
+        static_stack[i] = (uint64_t) rts_static_call(i);
+      }
+    }
+  }
 
   // printf("initialized.\n");
 }

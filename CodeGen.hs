@@ -113,6 +113,15 @@ makeStaticFunctionTables toplevs = sseq ptrs arities where
       , addLines [ "  };"  ] ]
   }
 
+makeTopLevIdxTable :: Int -> List (Named Int) -> CodeGenM_
+makeTopLevIdxTable main list = ssequence_
+  [ addLines [ "int toplev_index_table[] = " ]
+  , case list of { Nil -> addLine "  {" ; _ -> sforM_ (zipFirstRest ("  { ") ("  , ") (zipIndex list)) (\pair -> 
+      case pair of { Pair prefix ipair -> case ipair of { Pair i namedk -> case namedk of { Named name k -> 
+        -- let { k' = ifte (eq i main) (-1) k }  in
+        addWords [ prefix , showInt k , "   // " , showInt i , " ~> static_" , showInt k , " = " , name  ] }}}) }
+  , addLines [ "  };" ] ]
+
 makeDataConTable :: DataConTable -> CodeGenM_
 makeDataConTable trie = let { list = mapFromList (map swap (trieToList trie)) } in ssequence_
   [ addLines [ "char *datacon_table[] = " ]
@@ -133,32 +142,37 @@ makeStringLitTable list = ssequence_
   , addLines [ "  };" ] ]
 
 liftedProgramToCode :: FilePath -> StringLitTable -> DataConTable -> LiftedProgram -> CodeGenM_
-liftedProgramToCode source strlits dcontable pair = case pair of { LProgram toplevs topidxs main -> 
-  let { ntoplevs = length toplevs ; nfo = StatInfo topidxs } in ssequence_
-    [ addLines [ "" , concat [ "#include " , doubleQuoteString "rts.c" ] ]
-    , addLines [ "" , "// ----------------------------------------" , "" ]
-    , makeDataConTable dcontable
-    , addLines [ "" , "// ----------------------------------------" , "" ]
-    , makeStringLitTable strlits
-    , addLines [ "" , "// ----------------------------------------" , "" ]
-    , smapM_ (toplevToCode nfo) toplevs
-    , addLines [ "" , "// ----------------------------------------" , "" ]
-    , makeStaticFunctionTables toplevs
-    , addLines [ "" , "// ----------------------------------------" , "" ]
-    , addLines [ "int main(int argc, char **argv) {"
-               , "StaticFunPointers = static_funptr_table;"
-               , "StaticFunArities  = static_arity_table;" 
-               , "ConstructorNames  = datacon_table;" 
-               , "StaticStringTable = string_table;" ]
-    , addWords [ "NStatic           = ", showInt ntoplevs , " ;   // number of static functions " ]
-    , addLines [ "rts_initialize(argc,argv);" , "" , "// main" ]
-    , addWords [ "printf(" , doubleQuoteString (concat [ "[source file = " , source , "]" , backslashEn ]) , ");" ]
-    , sbind (liftedToCode nfo main) (\code -> withFreshVar "fresult" (\fresult -> sseq3
-        (addWords [ "heap_ptr ", fresult , " = " , code , " ; " ])
-        (addWords [ "// printf(" , doubleQuoteStringLn "done." , ");" ])
-        (addWords [ "rts_generic_println(" , fresult , ");" ])))
-    , addLines [ "exit(0);" , "}" ]
-    ] }
+liftedProgramToCode source strlits dcontable pair = case pair of { LProgram toplevs topidxs mainpair ->
+  case mainpair of { Pair mainidx mainterm -> 
+    let { ntoplevs = length toplevs ; nfo = StatInfo (map forgetName topidxs) } in ssequence_
+      [ addLines [ "" , concat [ "#include " , doubleQuoteString "rts.c" ] ]
+      , addLines [ "" , "// ----------------------------------------" , "" ]
+      , makeDataConTable dcontable
+      , addLines [ "" , "// ----------------------------------------" , "" ]
+      , makeStringLitTable strlits
+      , addLines [ "" , "// ----------------------------------------" , "" ]
+      , smapM_ (toplevToCode nfo) toplevs
+      , addLines [ "" , "// ----------------------------------------" , "" ]
+      , makeStaticFunctionTables toplevs
+      , addLines [ "" , "// ----------------------------------------" , "" ]
+      , makeTopLevIdxTable mainidx topidxs
+      , addLines [ "" , "// ----------------------------------------" , "" ]
+      , addLines [ "int main(int argc, char **argv) {"
+                 , "StaticFunPointers = static_funptr_table;"
+                 , "StaticFunArities  = static_arity_table;" 
+                 , "TopLevelIndices   = toplev_index_table;" 
+                 , "ConstructorNames  = datacon_table;" 
+                 , "StaticStringTable = string_table;" ]
+      , addWords [ "NStatic           = ", showInt ntoplevs         , " ;   // number of static functions"      ]
+      , addWords [ "NTopLev           = ", showInt (length topidxs) , " ;   // number of top-level definitions" ]
+      , addLines [ "rts_initialize(argc,argv);" , "" , "// main" ]
+      , addWords [ "printf(" , doubleQuoteString (concat [ "[source file = " , source , "]" , backslashEn ]) , ");" ]
+      , sbind (liftedToCode nfo mainterm) (\code -> withFreshVar "fresult" (\fresult -> sseq3
+          (addWords [ "heap_ptr ", fresult , " = " , code , " ; " ])
+          (addWords [ "// printf(" , doubleQuoteStringLn "done." , ");" ])
+          (addWords [ "rts_generic_println(" , fresult , ");" ])))
+      , addLines [ "exit(0);" , "}" ]
+      ] }}
 
 --------------------------------------------------------------------------------
   
@@ -197,8 +211,8 @@ debugInfoToCode name statfun = case statfun of { StatFun envsize arity lifted ->
 data StatInfo = StatInfo (List Static) deriving Show
 
 -- | Allocate closure and copy environment
-closureToCode' :: StatInfo -> ClosureF -> CodeGenM CodeLine
-closureToCode' nfo closure = case closure of { ClosureF sbody env arity -> case sbody of 
+closureToCode :: StatInfo -> ClosureF -> CodeGenM CodeLine
+closureToCode nfo closure = case closure of { ClosureF sbody env arity -> case sbody of 
   { StaticBody static -> case env of
     { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
     ; _   -> let { envsize = length env } in withFreshVar "closure" (\var -> sseq3
@@ -208,32 +222,14 @@ closureToCode' nfo closure = case closure of { ClosureF sbody env arity -> case 
   ; InlineBody lifted -> functionBodyToCode nfo (StatFun (length env) arity lifted)
   }}
 
--- | Most of the time we need to immediate evaluate thunks!
-closureToCode :: StatInfo -> ClosureF -> CodeGenM CodeLine
-closureToCode nfo closure = case closure of { ClosureF sbody env arity -> case sbody of
-  { InlineBody _ -> closureToCode' nfo closure
-  ; StaticBody _ -> ifte (gt arity 0)
-      (closureToCode' nfo closure)
-      (sbind (closureToCode' nfo closure) (\thunk -> withFreshVar "val" (\val -> sseq
-        (addWords [ "heap_ptr " , val , " = rts_force_value( (heap_ptr)(" , thunk , ") );" ])
-        (sreturn val)))) }}
-
-evalToReg :: StatInfo -> Name -> Lifted -> CodeGenM Name
-evalToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
+evalExprToReg :: StatInfo -> Name -> Lifted -> CodeGenM Name
+evalExprToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
   (addWords [ "heap_ptr " , var , " = " , res , ";"]) (sreturn var)))
 
--- does not force thunks
-loadVar' ::  StatInfo -> Var -> CodeLine
-loadVar' nfo var = case var of
-  { IdxV i -> concat [ "DE_BRUIJN(" , showInt i , ")" ]
-  ; TopV j -> case nfo of { StatInfo idxlist -> concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }
-  ; StrV j -> concat [ "rts_marshal_from_cstring( StaticStringTable[" , showInt j , "] )" ] }
-
--- forces thunks
 loadVar ::  StatInfo -> Var -> CodeLine
 loadVar nfo var = case var of
-  { IdxV i -> concat [ "rts_force_thunk_at( SP - " , showInt (inc i) , ")" ]
-  ; TopV j -> case nfo of { StatInfo idxlist -> concat [ "rts_force_thunk_at( static_stack + " , showInt (index j idxlist) , ")" ] }
+  { IdxV i -> concat [ "DE_BRUIJN(" , showInt i , ")" ]
+  ; TopV j -> case nfo of { StatInfo idxlist -> concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }
   ; StrV j -> concat [ "rts_marshal_from_cstring( StaticStringTable[" , showInt j , "] )" ] }
 
 loadAtom :: StatInfo -> Atom -> CodeLine
@@ -284,13 +280,13 @@ lazyPrimToCode nfo prim args = case prim of
 
 letToCode :: StatInfo -> ClosureF -> Lifted -> CodeGenM Name
 letToCode nfo cls body = 
-  withFreshVar2 "loc" "obj"         (\loc obj -> 
-  sbind (addLine  "// let ")        (\_    -> 
-  sbind (closureToCode nfo cls)     (\val1 -> 
+  withFreshVar2 "loc" "obj"             (\loc obj -> 
+  sbind (addLine  "// let ")            (\_    -> 
+  sbind (closureToCode nfo cls)         (\val1 -> 
   sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ]) (\_ ->
   sbind (addWords [ loc  , "[0] = (uint64_t) " , val1 , ";" ]) (\_ ->
-  sbind (evalToReg nfo "body" body) (\res -> 
-  sbind (addDefin obj res)          (\_   ->    
+  sbind (evalExprToReg nfo "body" body) (\res -> 
+  sbind (addDefin obj res)              (\_   ->    
   sbind (addWords [ "SP = " , loc , ";" ]) (\_ -> 
   sreturn obj ))))))))
 
@@ -319,11 +315,7 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
           ; StaticBody _ -> case env of { Nil -> sreturn Unit ; _ -> withFreshVar "tgt" (\tgt -> sseq
               (addDefin tgt (concat [ "(heap_ptr) " , pre_sp , "[", showInt j , "]" ]))
               (copyEnvironmentTo nfo "SP" tgt 1 env) )} }}})
-    -- evaluate thunks
-    , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of {
-        ClosureF static env arity -> let { i = minus n (inc j) } in swhen (eq arity 0) 
-          (addWords [ "rts_force_thunk_at( " , pre_sp, " + ", showInt j , " );" ]) }})
-    , sbind (evalToReg nfo "body" body) (\res -> addDefin obj res)   
+    , sbind (evalExprToReg nfo "body" body) (\res -> addDefin obj res)   
     , addWords [ "SP = " , pre_sp , ";" ]
     ]) (sreturn obj))
 
@@ -445,7 +437,8 @@ applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ 
         [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
         , copyEnvironmentTo' nfo "SP" obj 1 (reverse args)
         ]) (sreturn obj)) }
-    ; _ -> sbind (evalToReg nfo "afun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
-  ; _   -> sbind (evalToReg nfo "gfun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
+    ; _ -> sbind (evalExprToReg nfo "afun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
+  ; _   -> sbind (evalExprToReg nfo "gfun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
+           -- TODO ^^^ fix this ^^^
 
 --------------------------------------------------------------------------------

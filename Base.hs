@@ -230,6 +230,13 @@ charElem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (c
 stringElem :: String -> List String -> Bool
 stringElem x = go where { go ls = case ls of { Nil -> False ; Cons y ys -> ifte (stringEq x y) True (go ys) } }
 
+findIndex :: (a -> Bool) -> List a -> Maybe Int
+findIndex cond list = go 0 list where { go j ls = case ls of { Nil -> Nothing 
+  ; Cons x xs -> case cond x of { True -> Just j ; _ -> go (inc j) xs }}}
+
+unsafeFindIndex :: (a -> Bool) -> List a -> Int
+unsafeFindIndex cond list = case findIndex cond list of { Just k -> k ; Nothing -> error "unsafeFindIndex: not found" }
+
 foldl :: (a -> b -> a) -> (a -> List b -> a)
 foldl f x0 list = go x0 list where
   { go x ls = case ls of { Nil -> x ; Cons y ys -> go (f x y) ys }

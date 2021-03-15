@@ -210,18 +210,23 @@ termToClosure nstatic name level term = ifte (doInlineClosure term)
   (termToInlineClosure nstatic name level term) 
   (termToStaticClosure nstatic name level term)
 
--- | The int list is the mapping from the source code top-level functions
+-- | The (named) int list is the mapping from the source code top-level functions
 -- to the generated code top-level functions
-data LiftedProgram = LProgram (List TopLev) (List Int) Lifted deriving Show
+data LiftedProgram = LProgram 
+  { _toplevs :: List TopLev
+  , _indices :: List (Named Int)
+  , _main    :: Pair Int Lifted }
+  deriving Show 
 
 coreProgramToLifted :: CoreProgram -> LiftedProgram
 coreProgramToLifted coreprg = case coreprg of { CorePrg defins mainTerm -> let
   { nstatic = length defins  
-  ; action1 = sforM defins (\defin -> case defin of { Defin name term -> sfmap closureIndex (termToStaticClosure nstatic name 0 term) })
+  ; action1 = sforM defins (\defin -> case defin of { Defin name term -> sfmap (\i -> Named name (closureIndex i)) (termToStaticClosure nstatic name 0 term) })
   ; action2 = closureConvert nstatic nanoMainIs 0 0 mainTerm  
   ; action  = sliftA2 Pair action1 action2
+  ; mainidx = fromJust (findIndex (\def -> stringEq nanoMainIs (definedName def)) defins) 
   } in case runState action Nil of { Pair toplist pair2 -> 
-         case pair2 of { Pair idxlist main -> LProgram (reverse toplist) idxlist main } } }
+         case pair2 of { Pair idxlist mainlft -> LProgram (reverse toplist) idxlist (Pair mainidx mainlft) } } }
 
 addPrefix :: Name -> Name -> Name
 addPrefix prefix name = append3 prefix "/" name
