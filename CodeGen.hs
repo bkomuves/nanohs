@@ -165,6 +165,7 @@ liftedProgramToCode source strlits dcontable pair = case pair of { LProgram topl
                  , "StaticStringTable = string_table;" ]
       , addWords [ "NStatic           = ", showInt ntoplevs         , " ;   // number of static functions"      ]
       , addWords [ "NTopLev           = ", showInt (length topidxs) , " ;   // number of top-level definitions" ]
+      , addWords [ "NStrings          = ", showInt (length strlits) , " ;   // number of string constants"      ]
       , addLines [ "rts_initialize(argc,argv);" , "" , "// main" ]
       , addWords [ "printf(" , doubleQuoteString (concat [ "[source file = " , source , "]" , backslashEn ]) , ");" ]
       , sbind (liftedToCode nfo mainterm) (\code -> withFreshVar "fresult" (\fresult -> sseq3
@@ -255,12 +256,13 @@ evalExprToReg :: StatInfo -> Name -> Lifted -> CodeGenM Name
 evalExprToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
   (addWords [ "heap_ptr " , var , " = " , res , ";"]) (sreturn var)))
 
+-- | NB: @loadVar@ should /never/ allocate! otherwise really bad things can happen with the GC
 loadVar ::  StatInfo -> Var -> CodeLine
 loadVar nfo var = case var of
   { IdxV i -> concat [ "(heap_ptr) SP[" , showInt (negate (inc i)) , "]" ]
   ; LevV j -> concat [ "(heap_ptr) BP[" , showInt j , "]" ]
   ; TopV j -> case nfo of { StatInfo idxlist  -> concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }
-  ; StrV j -> concat [ "rts_marshal_from_cstring( StaticStringTable[" , showInt j , "] )" ] }
+  ; StrV j -> concat [ "HeapStringTable[" , showInt j , "]" ] }
 
 loadAtom :: StatInfo -> Atom -> CodeLine
 loadAtom nfo atom = case atom of
@@ -310,15 +312,16 @@ lazyPrimToCode nfo prim args = case prim of
 
 letToCode :: StatInfo -> ClosureF -> Lifted -> CodeGenM Name
 letToCode nfo cls body = 
-  withFreshVar2 "loc" "obj"             (\loc obj -> 
+  withFreshVar3 "tmp" "loc" "obj"       (\tmp loc obj -> 
   sbind (addLine  "// let ")            (\_    -> 
   sbind (closureToCode nfo cls)         (\val1 -> 
-  sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ])                    (\_ ->
-  sbind (addWords [ loc  , "[0] = (uint64_t) rts_force_value( (heap_ptr) " , val1 , ");" ]) (\_ ->
+  sbind (addWords [ "heap_ptr "  , tmp , " = rts_force_value( (heap_ptr) " , val1 , ");" ])  (\_ ->
+  sbind (addWords [ "stack_ptr " , loc , " = rts_stack_allocate(1);" ])                      (\_ ->
+  sbind (addWords [ loc  , "[0] = (uint64_t) " , tmp , " ;" ])                               (\_ ->
   sbind (evalExprToReg nfo "body" body) (\res -> 
   sbind (addDefin obj res)              (\_   ->    
   sbind (addWords [ "SP = " , loc , ";" ]) (\_ -> 
-  sreturn obj ))))))))
+  sreturn obj )))))))))
 
 -- | This is a bit tricky. We first allocate a big chunk on the heap, then allocate
 -- the stack space, then fill the whole thing. The idea that neither computation nor
