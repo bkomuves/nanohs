@@ -250,6 +250,17 @@ flipFoldr f list y0 = go list y0 where
 foldr :: (b -> a -> a) -> (a -> List b -> a)
 foldr f x list = flipFoldr f list x
 
+scanl :: (a -> b -> a) -> (a -> List b -> List a)
+scanl f x0 list = go x0 list where
+  { go x ls = case ls of { Nil -> Cons x Nil ; Cons y ys -> Cons x (go (f x y) ys) }
+  }
+
+-- | @scanl_ f a xs = init (scanl f a xs)@
+scanl_ :: (a -> b -> a) -> (a -> List b -> List a)
+scanl_ f x0 list = go x0 list where
+  { go x ls = case ls of { Nil -> Nil ; Cons y ys -> Cons x (go (f x y) ys) }
+  }
+
 sum :: List Int -> Int
 sum ns = foldl plus 0 ns
 

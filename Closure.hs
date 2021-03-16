@@ -65,8 +65,8 @@ hasDefaultF ls = case ls of { Nil -> False ; Cons x xs -> case isDefaultF x of {
 
 -- | When allocating a closure, we create a new local environment
 -- by pruning the current environment. We also remember the number
--- of lambda arguments (0 = thunk)
-data ClosureF = ClosureF ClosureBody (List Idx) Arity deriving Show
+-- of remaining arguments (0 = thunk)
+data ClosureF = ClosureF ClosureBody (List Level) Arity deriving Show
 
 data ClosureBody
   = StaticBody Static
@@ -78,6 +78,12 @@ closureIndex c = case c of { ClosureF b _ _ -> case b of { StaticBody s -> s ; _
 
 closureArity :: ClosureF -> Arity
 closureArity c = case c of { ClosureF _ _ a -> a }
+
+closureEnv :: ClosureF -> List Level
+closureEnv c = case c of { ClosureF _ e _ -> e }
+
+closureEnvSize :: ClosureF -> Int
+closureEnvSize c = case c of { ClosureF _ e _ -> length e }
 
 -- | A static function is an arity (which is separated to environment
 -- size + actual lambda arity) together with a lifted body

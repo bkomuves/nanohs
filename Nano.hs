@@ -67,11 +67,12 @@ printUsage = iomapM_ putStrLn
 runCompiler :: FilePath -> FilePath -> IO Unit
 runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
   PrgData strlits dconTrie coreprg -> 
-    ioseq (putStrLn "compiling...") (let
-      { lprogram = coreProgramToLifted coreprg
-      ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
-      } in writeLines outputFn code )})
-      -- } in ioforM_ code putStrLn )})
+    iosequence_ 
+      [ putStrLn "compiling..."
+      , let { lprogram = coreProgramToLifted coreprg
+            ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
+            } in writeLines outputFn code 
+      , putStrLn "done." ]})
 
 runInterpreter :: FilePath -> IO Unit
 runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 

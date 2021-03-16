@@ -11,7 +11,7 @@ main = runIO# action
 
 action = iosequence_
   [ putStrLn "church number example"
-  , print (natToInt (pow ten (intToNat 3)))
+  , print (natToInt (pow ten (intToNat 4)))
   ]
 
 -- action = putStrLn (g3 15 16 17) where

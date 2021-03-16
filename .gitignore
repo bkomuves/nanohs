@@ -3,6 +3,7 @@ bck/
 *.hi
 a.out
 tmp.c
+tmp1.c
 tmp2.c
 tmp.asm
 *.exe

@@ -237,14 +237,14 @@ closureToCode nfo closure = case closure of { ClosureF sbody env arity -> ifte (
 evaluateClosure :: StatInfo -> ClosureBody -> List Level -> Arity -> CodeGenM CodeLine
 evaluateClosure nfo sbody env arity = case sbody of 
   { StaticBody static -> case env of
-    { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
+    { Nil -> sreturn (concat [ "(heap_ptr) static_stack[" , showInt static , "]" ])
     ; _   -> applyClosure nfo (ClosureF sbody env arity) Nil }
   ; InlineBody lifted -> inlineFunctionBodyToCode nfo (StatFun (length env) arity lifted) }
 
 allocateClosure :: StatInfo -> ClosureBody -> List Level -> Arity -> CodeGenM CodeLine
 allocateClosure nfo sbody env arity = case sbody of 
   { StaticBody static -> case env of
-    { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
+    { Nil -> sreturn (concat [ "(heap_ptr) static_stack[" , showInt static , "]" ])
     ; _   -> let { envsize = length env } in withFreshVar "closure" (\var -> sseq3
       (addWords [ "heap_ptr " , var , " = rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ])
       (copyEnvironmentTo nfo var 1 env)
@@ -313,41 +313,38 @@ letToCode nfo cls body =
   withFreshVar2 "loc" "obj"             (\loc obj -> 
   sbind (addLine  "// let ")            (\_    -> 
   sbind (closureToCode nfo cls)         (\val1 -> 
-  sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ])        (\_ ->
+  sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ])                    (\_ ->
   sbind (addWords [ loc  , "[0] = (uint64_t) rts_force_value( (heap_ptr) " , val1 , ");" ]) (\_ ->
   sbind (evalExprToReg nfo "body" body) (\res -> 
   sbind (addDefin obj res)              (\_   ->    
   sbind (addWords [ "SP = " , loc , ";" ]) (\_ -> 
   sreturn obj ))))))))
 
+-- | This is a bit tricky. We first allocate a big chunk on the heap, then allocate
+-- the stack space, then fill the whole thing. The idea that neither computation nor
+-- GC should happen while the stack \/ heap is in intermediate state...
 letrecToCode :: StatInfo -> Int -> List ClosureF -> Lifted -> CodeGenM Name
-letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj pre_sp post_sp -> 
-  sseq (ssequence_
-    [ addWords [ "// letrec " , showInt n ]
-    , addWords [ "stack_ptr " , pre_sp  , " = rts_stack_allocate(" , showInt n , ");" ]
-    , addWords [ "stack_ptr " , post_sp , " = SP;" ]
-    -- we fill it up with non-gc-refs, so that when allocation below triggers GC, it doesn't point to random places...
-    , addWords [ "for(int i=0;i<" , showInt n , ";i++) { " , pre_sp , "[i] = (uint64_t) INT_LITERAL(0); }" ]  
-    -- allocate closures
-    , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of { ClosureF cbody env arity ->
-        case cbody of 
-          { InlineBody lifted -> sbind (inlineFunctionBodyToCode nfo (StatFun (length env) arity lifted)) (\res ->
-             addWords [ pre_sp, "[", showInt j , "] = (uint64_t) (" , res , " );" ]) 
-          ; StaticBody static -> case env of
-             { Nil -> addWords [ pre_sp, "[", showInt j , "] = static_stack[" , showInt static , "];" ] 
-             ; _   -> let { envsize = length env } in 
-                addWords [  pre_sp, "[", showInt j , "] = (uint64_t) rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ] 
-             }}}})
-    -- fill environments (we need to this _after_ all the allocation!)
-    , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of { ClosureF cbody env arity ->
-        case cbody of 
-          { InlineBody _ -> sreturn Unit
-          ; StaticBody _ -> case env of { Nil -> sreturn Unit ; _ -> withFreshVar "tgt" (\tgt -> sseq
-              (addDefin tgt (concat [ "(heap_ptr) " , pre_sp , "[", showInt j , "]" ]))
-              (copyEnvironmentTo nfo tgt 1 env) )} }}})
-    , sbind (evalExprToReg nfo "body" body) (\res -> addDefin obj res)   
-    , addWords [ "SP = " , pre_sp , ";" ]
-    ]) (sreturn obj))
+letrecToCode nfo n cls_list body = withFreshVar3 "obj" "mega" "letrec" (\obj mega loc -> 
+  let { envSizes = map closureEnvSize cls_list ; closSizes = map inc envSizes 
+      ; offsets = scanl_ plus 0 closSizes }
+  in  sseq (ssequence_
+      [ addWords [ "// letrec " , showInt n ]
+      , addWords [ "heap_ptr "  , mega , " = rts_heap_allocate(" , showInt (sum closSizes) , ");" ]
+      , addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(" , showInt n , ");" ]
+      -- we have to fill the stack first, because the environment will refer to this
+      , sforM_ (zipIndex offsets) (\pair -> case pair of { Pair i ofs -> 
+          addWords [ loc , "[" , showInt i , "] = (uint64_t) (" , mega , " + " , showInt ofs  , " );" ] })
+      -- then fill up the heap
+      , sforM_ (zip offsets cls_list) (\pair -> case pair of { Pair ofs closure -> case closure of
+          { ClosureF cbody env arity -> case cbody of 
+            { InlineBody _      -> error "InlineBody shouldn't appear in letrecs" 
+            ; StaticBody static -> ssequence_
+                [ addWords [ mega , "[" , showInt ofs , "] = TAGWORD_CLOSURE( " , showInt static , "," , showInt (length env) , "," , showInt arity , ");" ]
+                , copyEnvironmentTo nfo mega (plus ofs 1) env
+                ] }}})
+     , sbind (evalExprToReg nfo "body" body) (\res -> addDefin obj res)   
+     , addWords [ "SP = " , loc , ";" ]
+     ]) (sreturn obj))
 
 -- NB: heap constructor tag should be compatible with the nullary constructor tag
 caseOfToCode :: StatInfo -> LAtom -> List BranchF -> CodeGenM Name
@@ -438,16 +435,14 @@ genericApplicationTo nfo funvar args = let { nargs = length args } in
   sbind (addWords [ "heap_ptr " , finalres , " = rts_apply( " , funvar , " , " , showInt nargs , " );" ]) (\_ ->
         (sreturn finalres) )))
 
--- | We need to push arguments first, /then/ evaluate the code resulting in the lambda,
--- because the latter can allocate, and allocation can trigger GC, which needs the gc roots
--- on the stack! OOPS, but this ruins de Bruijn indices...
---
--- TODO: FIX THIS
+-- | NB: it's ok to evaluate the function first, even though it can trigger a GC,
+--  since the arguments are /atoms/, hence, already on the stack, and thus live 
+-- objects from the POV of the GC
 genericApplicationToLifted :: StatInfo -> Lifted -> List Atom -> CodeGenM Name
 genericApplicationToLifted nfo fun args = let { nargs = length args } in 
-  withFreshVar "fresult"                    (\finalres -> 
-  sbind (evalExprToReg nfo "zfun" fun)      (\funvar   ->    
-  sbind (assembleClosureArgs' nfo Nil args) (\tmp      ->
+  withFreshVar "fresult"                        (\finalres -> 
+  sbind (evalExprToReg        nfo "zfun" fun)   (\funvar   ->    
+  sbind (assembleClosureArgs' nfo Nil args)     (\_tmp     ->
   sbind (addWords [ "heap_ptr " , finalres , " = rts_apply( " , funvar , " , " , showInt nargs , " );" ]) (\_ ->
         (sreturn finalres) ))))
 

@@ -6,7 +6,7 @@
 #define MAX(a,b)   (((a)>=(b))?(a):(b))
 
 #define STACK_SIZE   (  1024*1024)
-#define HEAP_SIZE    (  1024*1024)
+#define HEAP_SIZE    (  92*1024*1024)
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
@@ -51,8 +51,8 @@ char **ArgVector;
 #define HTAG_DCON  4      // data constructor
 
 // heap object tag word
-#define TAGWORD_DATACON(con_tag,con_arity)             (                    ((con_arity)<<16) | ((con_tag  ) << 3) | HTAG_DCON )
-#define TAGWORD_CLOSURE(stat_idx, env_size,rem_arity)  ( ((stat_idx)<<32) | ((env_size )<<16) | ((rem_arity) << 3) | HTAG_CLOS )
+#define TAGWORD_DATACON(con_tag,con_arity)             ( ((con_arity)<<16) | ((con_tag  ) << 3) | HTAG_DCON )
+#define TAGWORD_CLOSURE(stat_idx, env_size,rem_arity)  ( (((uint64_t)(stat_idx))<<32) | ((env_size )<<16) | ((rem_arity) << 3) | HTAG_CLOS )
 
 #define PTAG_OF(ptr)       (((int64_t)(ptr)) & 0x07)
 #define HAS_PTAG(ptr,tag)  (PTAG_OF(ptr) == (tag))
@@ -546,9 +546,10 @@ void rts_initialize(int argc, char **argv) {
   }
 
   // evaluate top-level non-lambdas (they cannot be recursive if the compiler works correctly)
+  // note: this includes `main`. Since we reorder by dependency, it's OK.
   for(int k=0;k<NTopLev;k++) {
     int i = TopLevelIndices[k];
-    if (i>=0) {                              // we need to skip main, which is denoted by -1
+    if (i>=0) {                              // at some point we needed to skip main, which was denoted by -1
       int arity  = StaticFunArities[i];
       if (arity == 0) {
         // printf("toplevel #%d = static #%d\n",k,i);
@@ -557,7 +558,6 @@ void rts_initialize(int argc, char **argv) {
     }
   }
 
-  printf("initialized.\n");
 }
 
 // -----------------------------------------------------------------------------
