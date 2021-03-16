@@ -20,9 +20,6 @@ register uint64_t rsp asm ("rsp");
 
 uint64_t Last_compacted_heap_size;
 
-#define DE_BRUIJN_FROM(sptr,k) ((heap_ptr)(sptr[-k-1]))
-#define DE_BRUIJN(k)           DE_BRUIJN_FROM(SP,k)
-
 // arguments come on stack
 typedef heap_ptr generic_fun_t();
 
@@ -392,7 +389,7 @@ heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t 
   }
 }
 
-// arguments are on the stack
+// arguments are on the stack.
 heap_ptr rts_apply(heap_ptr funobj, int nargs) {
   stack_ptr args = SP - nargs;
   switch(PTAG_OF(funobj)) {
@@ -446,6 +443,45 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
       // rts_generic_println(funobj);
       return rts_internal_error("application to a literal constant");
   }
+}
+
+// -----------------------------------------------------------------------------
+// force thunks (only used when there are non-lambdas present in letrec)
+
+heap_ptr rts_force_value(heap_ptr obj) {
+  switch(PTAG_OF(obj)) {
+    // closure or data constructor
+    case PTAG_PTR: {
+      uint64_t tagword = obj[0];
+      switch(tagword & 0x07) {
+        // closure
+        case HTAG_CLOS: {
+          int rem_arity = (tagword & 0xffff) >> 3;
+          int env_size  = (tagword >> 16) & 0xffff;
+          if (rem_arity > 0) { return obj; } else {
+            int statfun  = (tagword >> 32);
+            return rts_apply_worker( env_size, statfun, env_size, obj+1, 0);
+          } }
+        // data con
+        default: return obj;
+    } }
+    // static function (still can be a CAF)
+    case PTAG_FUN: { 
+      int static_idx = ((int64_t)obj) >> 3;
+      int arity = StaticFunArities[static_idx];
+      if (arity>0) { return obj; } else { 
+        return rts_static_call(static_idx);   // CAF
+    } }
+    // anything else
+    default: return obj;
+  }
+}
+
+heap_ptr rts_force_thunk_at(stack_ptr ptr) {
+  heap_ptr old = (heap_ptr)ptr[0];
+  heap_ptr val = rts_force_value(old);
+  ptr[0] = (uint64_t) val;
+  return val;
 }
 
 // -----------------------------------------------------------------------------
@@ -521,7 +557,7 @@ void rts_initialize(int argc, char **argv) {
     }
   }
 
-  // printf("initialized.\n");
+  printf("initialized.\n");
 }
 
 // -----------------------------------------------------------------------------

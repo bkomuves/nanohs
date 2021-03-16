@@ -76,7 +76,7 @@ reorderLets = go where
     ; LamE  n body  -> LamE n (go body)
     ; LetE  defs e  -> LetE (map goDefin defs) (go e)
     ; RecE  defs e  -> let { ps = partitionLets (map goDefin defs) } in letWorker ps (go e)
-    ; CaseE e brs   -> CaseE (go e) (map goBranch brs)
+    ; CaseE e brs   -> CaseE (lfmap go e) (map goBranch brs)
     ; ListE es      -> ListE (map go es)
     ; PrimE p es    -> PrimE p (map go es) }
   ; goDefin def = case def of { Defin n rhs -> Defin n (go rhs) }

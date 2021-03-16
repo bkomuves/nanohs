@@ -105,9 +105,9 @@ scopeCheck dcontable = go 0 where
         ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name (LevL j) scp }
         ; scope' = foldl f scope (zip (map definedName defs) (rangeFrom level n))
         } in RecT n (map (goDefin level' scope') defs) (go level' scope' body)
-    ; CaseE what brs -> case mbAtom level scope what of
-        { Just atom -> goCase level scope atom brs
-        ; Nothing   -> LetT (go level scope what) (goCase (inc level) scope (VarA (Named "scrut" (IdxV 0))) brs) }
+    ; CaseE lwhat brs -> case lwhat of { Located loc what -> case mbAtom level scope what of
+        { Just atom -> goCase level scope loc atom brs
+        ; Nothing   -> LetT (go level scope what) (goCase (inc level) scope loc (VarA (Named "scrut" (IdxV 0))) brs) }}
     ; LitE  lit -> case lit of
         { StrL cs -> go level scope (ListE (map (\x -> LitE (ChrL x)) cs))
         ; _       -> AtmT (KstA lit) }
@@ -124,7 +124,7 @@ scopeCheck dcontable = go 0 where
   ; finishPrim prim theEis ofs = let 
       { theVars = zipWithIndex (\i j -> VarA (Named (appendInt "parg" j) (IdxV i))) (reverse (range ofs)) 
       ; worker eis vars atoms = case eis of { Nil -> PriT prim (reverse atoms) ; Cons ei eis' -> case ei of
-          { Right atom -> worker eis' vars (Cons (shiftAtom ofs atom) atoms) 
+          { Right atom -> worker eis' vars (Cons (shiftAtomIndex ofs atom) atoms) 
           ; Left  term -> case vars of { Cons var vars' -> LetT term (worker eis' vars' (Cons var atoms)) }}}
       } in worker theEis theVars Nil
   -- ; goPrim :: PrimOp -> Int -> Level -> Scope -> List (Either Term Atom) -> List Expr -> Term 
@@ -137,7 +137,7 @@ scopeCheck dcontable = go 0 where
   --     { Nil            -> body 
   --     ; Cons this rest -> LetT (go level scope this) (goArgs (inc level) scope rest body) }
   ; goDefin level scope defin = case defin of { Defin name what -> Named name (go level scope what) }
-  ; goCase level scope var branches = CasT var (map goBranch branches) where
+  ; goCase level scope loc var branches = CasT (Located loc var) (map goBranch branches) where
     { goBranch branch = case branch of
         { DefaultE         rhs -> DefaultT (go level scope rhs)
         ; BranchE con args rhs -> let { n = length args ; level' = plus level n

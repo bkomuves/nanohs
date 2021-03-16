@@ -515,9 +515,9 @@ letRecExprP f p t = letExprP' RecE "let" f p t
 
 caseExprP :: Parse Expr
 caseExprP f p t  = 
-  pbind (keywordP "case") (\_    ->
-  pbind (exprP          ) (\expr ->
-  pbind (keywordP "of"  ) (\_    ->
-  pbind (branchesP      ) (\brs  -> preturn (CaseE expr brs))))) f p t 
+  pbind (keywordP "case") (\_     ->
+  pbind (locatedL exprP ) (\lexpr ->
+  pbind (keywordP "of"  ) (\_     ->
+  pbind (branchesP      ) (\brs   -> preturn (CaseE lexpr brs))))) f p t 
 
 --------------------------------------------------------------------------------

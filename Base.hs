@@ -141,7 +141,7 @@ mbfmap :: (a -> b) -> Maybe a -> Maybe b
 mbfmap f mb = case mb of { Just x -> Just (f x) ; Nothing -> Nothing }
 
 catMaybes :: List (Maybe a) -> List a
-catMaybes = go where { go list = case list of { Nil -> Nil ; Cons mb rest ->
+catMaybes mbs = go mbs where { go list = case list of { Nil -> Nil ; Cons mb rest ->
   case mb of { Nothing -> go rest ; Just x -> Cons x (go rest) } } }
 
 --------------------------------------------------------------------------------
@@ -413,8 +413,14 @@ delimString l r xs = Cons l (append xs (Cons r Nil))
 backslashEn :: String
 backslashEn = [ backslashC  , 'n' ]
 
+backslashDoubleQuote :: String
+backslashDoubleQuote = [ backslashC  , '"' ]
+
 doubleQuoteString :: String -> String
 doubleQuoteString str = delimString doubleQuoteC doubleQuoteC str
+
+escapedDoubleQuoteString :: String -> String
+escapedDoubleQuoteString str = append3 backslashDoubleQuote str backslashDoubleQuote
 
 doubleQuoteStringLn :: String -> String
 doubleQuoteStringLn str = delimString doubleQuoteC doubleQuoteC (append str backslashEn)
@@ -500,12 +506,13 @@ getArg :: Int -> IO (Maybe String)
 getArg i = (\token -> Pair token (getArg# i))
 
 getArgs :: IO (List String)
-getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
+getArgs token = go 0 token where { go k = iobind (getArg k) (\mb -> case mb of 
   { Nothing   -> ioreturn Nil 
   ; Just this -> iobind (go (inc k)) (\rest -> ioreturn (Cons this rest)) })}
 
 putStr :: String -> IO Unit
-putStr xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
+putStr s = (\token -> Pair token (hPutStr# stdout s))
+-- putStr xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
 
 putStrLn :: String -> IO Unit
 putStrLn str = ioseq (putStr str) (putChar (chr 10)) 

@@ -34,6 +34,7 @@ import ScopeCheck
 {-% include "ScopeCheck.hs" %-}
 
 --------------------------------------------------------------------------------
+-- ** Types
 
 -- pattern VarF nvar = AtmF (VarA nvar)
 -- pattern ConF ncon = AtmF (ConA ncon)
@@ -45,7 +46,7 @@ data Lifted
   | AppF Lifted Atom
   | PriF PrimOp (List Atom  )
   | LZPF PrimOp (List Lifted)
-  | CasF Atom (List BranchF)
+  | CasF LAtom (List BranchF)
   | LamF ClosureF
   | RecF Int (List (Named ClosureF)) Lifted
   | LetF ClosureF Lifted
@@ -75,12 +76,23 @@ data ClosureBody
 closureIndex :: ClosureF -> Static
 closureIndex c = case c of { ClosureF b _ _ -> case b of { StaticBody s -> s ; _ -> error "closureIndex" } }
 
+closureArity :: ClosureF -> Arity
+closureArity c = case c of { ClosureF _ _ a -> a }
+
 -- | A static function is an arity (which is separated to environment
 -- size + actual lambda arity) together with a lifted body
 data StatFun = StatFun Arity Arity Lifted deriving Show
 
+statFunTotalArity :: StatFun -> Int
+statFunTotalArity sfun = case sfun of { StatFun envsize arity _lifted -> plus envsize arity }
+
 -- | A top-level definition is a name, a static index and a static function
 data TopLev = TopLev (Named Static) StatFun deriving Show
+
+topLevTotalArity :: TopLev  -> Int
+topLevTotalArity toplev = case toplev of { TopLev _nidx sfun -> statFunTotalArity sfun }
+
+--------------------------------------------------------------------------------
 
 recogLamsT :: Term -> Pair (List Name) Term
 recogLamsT term = case term of
@@ -88,26 +100,84 @@ recogLamsT term = case term of
       case recogLamsT body of { Pair names rhs -> Pair (Cons name names) rhs } }
   ; _              -> Pair Nil term }
 
--- recogAppsF :: Lifted -> Pair Lifted (List Lifted)
--- recogAppsF term = case term of
---   { AppF tm1 tm2 -> case recogAppsF tm1 of { Pair f args -> Pair f (snoc args tm2) }
---   ; _            -> Pair term Nil }
-
 recogAppsF :: Lifted -> Pair Lifted (List Atom)
 recogAppsF term = case term of
   { AppF tm1 v2  -> case recogAppsF tm1 of { Pair f args -> Pair f (snoc args v2) }
   ; _            -> Pair term Nil }
 
+recogLetsT :: Term -> Pair (List Term) Term
+recogLetsT term = case term of
+  { LetT t1 t2   -> case recogLetsT t2 of { Pair ts body -> Pair (Cons t1 ts) body } 
+  ; _            -> Pair Nil term }
+
+--------------------------------------------------------------------------------
+-- ** Closure converting programs
+
+-- | The (named) int list is the mapping from the source code top-level functions
+-- to the generated code top-level functions
+data LiftedProgram = LProgram 
+  { _toplevs :: List TopLev
+  , _indices :: List (Named Int)
+  , _main    :: Pair Int Lifted }
+  deriving Show 
+
+coreProgramToLifted :: CoreProgram -> LiftedProgram
+coreProgramToLifted coreprg = case coreprg of { CorePrg defins mainTerm -> let
+  { nstatic = length defins  
+  ; action1 = sforM defins (\defin -> case defin of { Defin name term -> 
+      sfmap (\i -> Named name (closureIndex i)) (termToStaticClosure name idSubs 0 term) })
+  ; action2 = closureConvert nanoMainIs idSubs 0 mainTerm  
+  ; action  = sliftA2 Pair action1 action2
+  ; mainidx = fromJust (findIndex (\def -> stringEq nanoMainIs (definedName def)) defins) 
+  } in case runState action Nil of { Pair toplist pair2 -> 
+         case pair2 of { Pair idxlist mainlft -> LProgram (reverse toplist) idxlist (Pair mainidx mainlft) } } }
+
+--------------------------------------------------------------------------------
+-- ** Subsitutions and pruning
+
+-- | Partial subsitutions
+type Subs = (Level -> Maybe Level)
+
+idSubs :: Subs 
+idSubs = \j -> ifte (lt j 0) Nothing (Just j)
+
+composeSubs :: Subs -> Subs -> Subs
+composeSubs subs1 subs2 = \j -> case subs1 j of { Nothing -> Nothing ; Just k -> subs2 k }
+
+-- | Substitution which flips (reverses) the first @n@ things
+flipSubs :: Int -> Subs
+flipSubs n = \j -> ifte (lt j 0) Nothing (Just (ifte (lt j n) (minus n (inc j)) j))
+
+-- | Apply a substitution
+applySubs :: Subs -> Level -> Level
+applySubs subs j = case subs j of { Just k -> k ; _ -> error "substitution: input not in domain" }
+
+type PrunedEnv = List Level
+
+pruningSubs :: Subs -> Level -> Level -> Term -> Pair PrunedEnv Subs
+pruningSubs oldsubs boundary level term = Pair pruned subs where
+  { pruned0  = pruneEnvironment boundary level term
+  ; pruned   = map (applySubs oldsubs) pruned0
+  ; npruned  = length pruned
+  ; envtable = zip pruned (range npruned)
+  ; subs j   = ifte (lt j boundary) (mapLookup (applySubs oldsubs j) envtable) 
+                                    (Just (plus (minus j boundary) npruned))
+  } 
+
 -- | Figure out the part of the environment used by a term.
 -- Returns a set of /levels/
 pruneEnvironment :: Level -> Level -> Term -> IntSet
-pruneEnvironment boundary = go where
+pruneEnvironment boundary level term = go level term where
   { goAtom level atom = case atom of
     { VarA nvar -> goVar level (forgetName nvar)
     ; ConA _    -> setEmpty
     ; KstA _    -> setEmpty }
-  ; goVar  level var = case var of { TopV _ -> setEmpty ; StrV _ -> setEmpty ;
-      IdxV idx -> let { j = minus level (inc idx) } in ifte (lt j boundary) (setSingleton j) setEmpty }
+  ; goVar level var = case var of 
+      { IdxV idx  -> goLevel (minus level (inc idx))
+      ; LevV jdx  -> goLevel jdx
+      ; TopV _    -> setEmpty 
+      ; StrV _    -> setEmpty } 
+  ; goLevel j = ifte (lt j boundary) (setSingleton j) setEmpty 
   ; go level term = case term of
     { AtmT atom   -> goAtom level atom
     ; AppT t1 a2  -> setUnion (go level t1) (goAtom level a2)
@@ -118,11 +188,14 @@ pruneEnvironment boundary = go where
                      in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
     ; PrgT n ts t -> let { level' = level }
                      in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
-    ; LetT t1 t2  -> setUnion (go (inc level) t2) (go level t1)
-    ; CasT v brs  -> setUnion (goAtom level v) (setUnions (map (goBranch level) brs)) }
+    ; LetT t1 t2  -> setUnion (go level t1) (go (inc level) t2)
+    ; CasT v brs  -> setUnion (goAtom level (located v)) (setUnions (map (goBranch level) brs)) }
   ; goBranch level branch = case branch of
     { BranchT _ n rhs -> go (plus level n) rhs
     ; DefaultT    rhs -> go       level    rhs } }
+
+--------------------------------------------------------------------------------
+-- ** Closure conversion
 
 -- | The closure conversion monad. Note: the list is reverse order!
 type ClosM a = State (List TopLev) a
@@ -157,106 +230,69 @@ data LambdaT
 -- (so debugging is easier), and the level is the level where the lambda
 -- starts (the \"boundary\" level)
 --
--- TODO: this has really bad complexity because it always traverses subterms
--- at each recursive calls; we should instead define subsitutions and compose
--- them...
-lambdaToClosure :: Int -> Name -> Level -> LambdaT -> ClosM ClosureF
-lambdaToClosure nstatic name boundary lambda = case lambda of { LambdaT nargs body ->
-  let { newlevel = plus boundary nargs
-      ; pruned   = pruneEnvironment boundary newlevel body
-      ; npruned  = length pruned
-      ; ntotal   = plus nargs npruned
-      ; newstart = minus boundary npruned
-      ; envtable = zip pruned (reverse (range npruned))
-      ; pr_idxs  = map (\j -> minus boundary (inc j)) pruned
-      ; replaceIdx1 level idx = let { j = minus level (inc idx) } in 
-          ifte (ge j boundary) (idx) 
-            (case mapLookup j envtable of
-              { Nothing -> error "lambdaToClosure: fatal error: variable not in the pruned environment"
-              ; Just m  -> plus (minus level boundary) m })
-      -- flip argument order (including the environment!)
-      ; replaceIdx level old = let { idx = replaceIdx1 level old ; j = minus level (inc idx ) } in
-          ifte (ge j newlevel) idx (plus (minus level newlevel) (minus j newstart))
-      ; replaceAtom level atom = case atom of 
-          { VarA nvar -> case nvar of { Named name var -> case var of
-            { IdxV idx -> VarA (Named name (IdxV (replaceIdx level idx))) 
-            ; _        -> atom }}
-          ; _ -> atom }
-      ; body' = transformAtom replaceAtom newlevel body
-      }
-  in  sbind (closureConvert nstatic name boundary newlevel body') (\statbody ->
-      sbind (addStatFun name (StatFun npruned nargs statbody))    (\statidx  ->
-      sreturn (ClosureF (StaticBody statidx) pr_idxs nargs))) }
--- debug name (Triple (Triple boundary nargs pruned) body body') (
+lambdaToClosure :: Name -> Subs -> Level -> LambdaT -> ClosM ClosureF
+lambdaToClosure name oldsubs boundary lambda = case lambda of { LambdaT nargs body -> 
+  let { newlevel = plus boundary nargs } in 
+    case pruningSubs oldsubs boundary newlevel body of { Pair prunedEnv newsubs ->
+      let { npruned = length prunedEnv ; ntotal = plus npruned nargs 
+          ; newsubs' = composeSubs newsubs (flipSubs ntotal) }
+      in  sbind (closureConvert name newsubs' newlevel body)        (\statbody ->
+          sbind (addStatFun name (StatFun npruned nargs statbody))  (\statidx  ->
+          sreturn (ClosureF (StaticBody statidx) prunedEnv nargs)))  }}
 
+termToStaticClosure :: Name -> Subs -> Level -> Term -> ClosM ClosureF
+termToStaticClosure name subs level tm = case recogLamsT tm of { Pair args body -> 
+  lambdaToClosure name subs level (LambdaT (length args) body) }
 
-termToStaticClosure :: Int -> Name -> Level -> Term -> ClosM ClosureF
-termToStaticClosure nstatic name level tm = case recogLamsT tm of { Pair args body -> 
-  lambdaToClosure nstatic name level (LambdaT (length args) body) }
-
-termToInlineClosure :: Int -> Name -> Level -> Term -> ClosM ClosureF
-termToInlineClosure nstatic name level tm = 
-  sbind (closureConvert nstatic name 0 level tm) (\lifted ->
+-- Note: we don't do environment pruning here (boundary = 0)
+termToInlineClosure :: Name -> Subs -> Level -> Term -> ClosM ClosureF
+termToInlineClosure name subs level tm = 
+  sbind (closureConvert name subs level tm) (\lifted ->
   sreturn (ClosureF (InlineBody lifted) Nil 0))
 
 doInlineClosure :: Term -> Bool
 doInlineClosure tm = case tm of
   { LamT _     -> False
   ; AtmT _     -> True
-  ; _          -> le (termSize tm) 128 }
+  ; _          -> False }
+   -- le (termSize tm) 64 }
 
-termToClosure :: Int -> Name -> Level -> Term -> ClosM ClosureF
-termToClosure nstatic name level term = ifte (doInlineClosure term) 
-  (termToInlineClosure nstatic name level term) 
-  (termToStaticClosure nstatic name level term)
-
--- | The (named) int list is the mapping from the source code top-level functions
--- to the generated code top-level functions
-data LiftedProgram = LProgram 
-  { _toplevs :: List TopLev
-  , _indices :: List (Named Int)
-  , _main    :: Pair Int Lifted }
-  deriving Show 
-
-coreProgramToLifted :: CoreProgram -> LiftedProgram
-coreProgramToLifted coreprg = case coreprg of { CorePrg defins mainTerm -> let
-  { nstatic = length defins  
-  ; action1 = sforM defins (\defin -> case defin of { Defin name term -> sfmap (\i -> Named name (closureIndex i)) (termToStaticClosure nstatic name 0 term) })
-  ; action2 = closureConvert nstatic nanoMainIs 0 0 mainTerm  
-  ; action  = sliftA2 Pair action1 action2
-  ; mainidx = fromJust (findIndex (\def -> stringEq nanoMainIs (definedName def)) defins) 
-  } in case runState action Nil of { Pair toplist pair2 -> 
-         case pair2 of { Pair idxlist mainlft -> LProgram (reverse toplist) idxlist (Pair mainidx mainlft) } } }
+termToClosure :: Name -> Subs -> Level -> Term -> ClosM ClosureF
+termToClosure name subs level term = ifte (doInlineClosure term) 
+  (termToInlineClosure name subs level term) 
+  (termToStaticClosure name subs level term)
 
 addPrefix :: Name -> Name -> Name
 addPrefix prefix name = append3 prefix "/" name
 
-closureConvert :: Int -> Name -> Level -> Level -> Term -> ClosM Lifted
-closureConvert nstatic nameprefix boundary = go where
+closureConvert :: Name -> Subs -> Level -> Term -> ClosM Lifted
+closureConvert nameprefix subs level term = go level term where
   { prefixed name = addPrefix nameprefix name
-  -- ; goVar level idx = IdxV idx
-  -- ; goAtom level atom = case atom of 
-  --     { VarA named -> case named of { Named name var -> case var of
-  --       { IdxV idx   -> VarA (Named name (goVar level idx)) 
-  --       ; TopV top   -> VarA (Named name (TopV top)) }}
-  --     ; ConA named -> ConA named
-  --     ; KstA lit   -> KstA lit   }
-  ; goAtom level atom = atom
+    -- convert to de Bruijn levels from indices
+  ; goLev        jdx  = LevV (applySubs subs                   jdx  )
+  ; goIdx  level idx  = LevV (applySubs subs (minus level (inc idx)))
+  ; goAtom level atom = case atom of 
+      { VarA named -> case named of { Named name var -> case var of
+         { IdxV idx -> VarA (Named name (goIdx level idx)) 
+         ; LevV jdx -> VarA (Named name (goLev       jdx))
+         ; _        -> atom } }
+      ; _  -> atom }
   ; go level term = case term of
     { AtmT named    -> sreturn (AtmF (goAtom level named))
     ; AppT t1 a2    -> sliftA2 AppF (go level t1) (sreturn (goAtom level a2))
     ; PriT pri args -> sreturn (PriF pri  ( map  (goAtom level) args))
     ; LZPT pri args -> sfmap   (LZPF pri) (smapM (go     level) args)
     ; LamT _        -> case recogLamsT term of { Pair args body ->
-                         sfmap LamF (lambdaToClosure nstatic (prefixed "lambda") level (LambdaT (length args) body)) }
-    ; CasT v brs    -> sfmap (CasF (goAtom level v)) (smapM (goBranch level) brs)
+                         sfmap LamF (lambdaToClosure (prefixed "lambda")  subs level (LambdaT (length args) body)) }
+    ; CasT lv brs   -> sfmap (CasF (lfmap (goAtom level) lv)) (smapM (goBranch level) brs)
     ; RecT n nts tm -> let { level' = plus level n }
                        in  sliftA2 (RecF n) (smapM (goRec1 level') nts) (go level' tm) 
-    ; LetT tm body  -> sliftA2 LetF (termToClosure nstatic (prefixed "let") level tm) (go (inc level) body) } 
-  ; goRec1 level named = case named of { Named name tm -> sfmap (Named name) (termToStaticClosure nstatic (prefixed name) level tm) }
+    ; LetT tm body  -> sliftA2 LetF (termToClosure (prefixed "let") subs level tm) (go (inc level) body) } 
+  ; goRec1 level named = case named of { Named name tm -> 
+      sfmap (Named name) (termToStaticClosure (prefixed name) subs level tm) }
   ; goBranch level br  = case br of
-    { DefaultT        rhs -> sfmap (DefaultF       ) (termToClosure    nstatic (prefixed "default")      level            rhs ) 
-    ; BranchT named n rhs -> sfmap (BranchF named n) (lambdaToClosure nstatic  (prefixed (nameOf named)) level (LambdaT n rhs))
+    { DefaultT        rhs -> sfmap (DefaultF       ) (termToClosure   (prefixed "default")      subs level            rhs ) 
+    ; BranchT named n rhs -> sfmap (BranchF named n) (lambdaToClosure (prefixed (nameOf named)) subs level (LambdaT n rhs))
     }}
 
 --------------------------------------------------------------------------------

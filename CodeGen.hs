@@ -177,14 +177,15 @@ liftedProgramToCode source strlits dcontable pair = case pair of { LProgram topl
 --------------------------------------------------------------------------------
   
 -- | Sometimes we want to inline it
-functionBodyToCode :: StatInfo -> StatFun -> CodeGenM Name
-functionBodyToCode nfo statfun = 
+inlineFunctionBodyToCode :: StatInfo -> StatFun -> CodeGenM Name
+inlineFunctionBodyToCode nfo statfun = 
   case statfun of { StatFun envsize arity lifted -> let { ntotal = plus envsize arity } in 
-    withFreshVar "BP" (\bp -> sseq
-      (addWords [ "stack_ptr " , bp , " = SP - ", showInt ntotal , " ;" ])
+    withFreshVar "bp" (\sp_old -> sseq3
+      (addWords [ "// inlined function body with arity = " , showInt envsize , " + " , showInt arity ])
+      (swhen (lt 0 ntotal) (addWords [ "stack_ptr " , sp_old , " = SP - ", showInt ntotal , " ;" ]))
       (sbind (liftedToCode nfo lifted) (\result -> withFreshVar "final" (\fresult -> sseq3
          (addDefin fresult result)
-         (addWords [ "SP = " , bp , ";   // callee cleanup " ])
+         (swhen (lt 0 ntotal) (addWords [ "SP = " , sp_old , ";   // callee cleanup " ]))
          (sreturn fresult))))) }
 
 toplevToCode :: StatInfo -> TopLev -> CodeGenM_
@@ -194,8 +195,18 @@ toplevToCode nfo toplev = case toplev of { TopLev named statfun -> case named of
     , addWords [ "// static function `" , name , "` with arity = " , showInt envsize , " + " , showInt arity ]
     , addWords [ "heap_ptr " , staticLabel static , "() {" ]
     -- , debugInfoToCode name statfun
-    , sbind (functionBodyToCode nfo statfun) (\fresult -> addWords [ "return (" , fresult , ");" ] )
+    , sbind (functionBodyToCode nfo statfun) (\fresult -> 
+        -- sseq (debugInfoToCode2 name fresult) 
+        (addWords [ "return (" , fresult , ");" ]))
     , addLine "}" ] }}}
+  where
+    { functionBodyToCode nfo statfun = 
+        case statfun of { StatFun envsize arity lifted -> let { ntotal = plus envsize arity } in sseq
+          (addWords [ "stack_ptr BP = SP - ", showInt ntotal , " ;" ])
+          (sbind (liftedToCode nfo lifted) (\result -> withFreshVar "final" (\fresult -> sseq3
+             (addDefin fresult result)
+             (addWords [ "SP = BP;   // callee cleanup " ])
+             (sreturn fresult)))) }}
 
 debugInfoToCode name statfun = case statfun of { StatFun envsize arity lifted -> let { ntotal = plus envsize arity } in ssequence_
   [ addWords [ "printf(" , doubleQuoteStringLn "=======================" , ");" ]
@@ -204,23 +215,41 @@ debugInfoToCode name statfun = case statfun of { StatFun envsize arity lifted ->
   , sforM_ (range envsize) (\i -> addWords [ "rts_debug_println(" , doubleQuoteString (appendInt "env" (minus envsize (inc i))) , ", (heap_ptr) SP[-" , showInt envsize , "+" , showInt i , "] );" ])
   ]}
 
+debugInfoToCode2 name retval = ssequence_ 
+  [ addWords [ "printf(" , doubleQuoteString "return val (%s):" , "," , doubleQuoteString name , ");" ]
+  , addWords [ "rts_debug_println(" , doubleQuoteString "  ret" , " , (heap_ptr) " , retval    , ");" ]
+  ]
+
 --------------------------------------------------------------------------------
 -- ** main code generation
 
--- The list of the indices in the /original/ source in the /compiled/ top-levels
+-- |  The list of the indices in the /original/ source in the /compiled/ static functions;
+-- and the list of static function arities
 data StatInfo = StatInfo (List Static) deriving Show
+-- data StatInfo = StatInfo (List Static) (List Arity) deriving Show
 
 -- | Allocate closure and copy environment
 closureToCode :: StatInfo -> ClosureF -> CodeGenM CodeLine
-closureToCode nfo closure = case closure of { ClosureF sbody env arity -> case sbody of 
+closureToCode nfo closure = case closure of { ClosureF sbody env arity -> ifte (eq arity 0) 
+  (evaluateClosure nfo sbody env arity)
+  (allocateClosure nfo sbody env arity) }
+
+evaluateClosure :: StatInfo -> ClosureBody -> List Level -> Arity -> CodeGenM CodeLine
+evaluateClosure nfo sbody env arity = case sbody of 
+  { StaticBody static -> case env of
+    { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
+    ; _   -> applyClosure nfo (ClosureF sbody env arity) Nil }
+  ; InlineBody lifted -> inlineFunctionBodyToCode nfo (StatFun (length env) arity lifted) }
+
+allocateClosure :: StatInfo -> ClosureBody -> List Level -> Arity -> CodeGenM CodeLine
+allocateClosure nfo sbody env arity = case sbody of 
   { StaticBody static -> case env of
     { Nil -> sreturn (concat [ "static_stack[" , showInt static , "]" ])
     ; _   -> let { envsize = length env } in withFreshVar "closure" (\var -> sseq3
       (addWords [ "heap_ptr " , var , " = rts_allocate_closure(" , showInt static , "," , showInt envsize , "," , showInt arity , ");" ])
-      (copyEnvironmentTo nfo "SP" var 1 env)
+      (copyEnvironmentTo nfo var 1 env)
       (sreturn var)) }
-  ; InlineBody lifted -> functionBodyToCode nfo (StatFun (length env) arity lifted)
-  }}
+  ; InlineBody lifted -> inlineFunctionBodyToCode nfo (StatFun (length env) arity lifted) }
 
 evalExprToReg :: StatInfo -> Name -> Lifted -> CodeGenM Name
 evalExprToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo term) (\res -> sseq
@@ -228,8 +257,9 @@ evalExprToReg nfo name term = withFreshVar name (\var -> sbind (liftedToCode nfo
 
 loadVar ::  StatInfo -> Var -> CodeLine
 loadVar nfo var = case var of
-  { IdxV i -> concat [ "DE_BRUIJN(" , showInt i , ")" ]
-  ; TopV j -> case nfo of { StatInfo idxlist -> concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }
+  { IdxV i -> concat [ "(heap_ptr) SP[" , showInt (negate (inc i)) , "]" ]
+  ; LevV j -> concat [ "(heap_ptr) BP[" , showInt j , "]" ]
+  ; TopV j -> case nfo of { StatInfo idxlist  -> concat [ "(heap_ptr) static_stack[" , showInt (index j idxlist) , "]" ] }
   ; StrV j -> concat [ "rts_marshal_from_cstring( StaticStringTable[" , showInt j , "] )" ] }
 
 loadAtom :: StatInfo -> Atom -> CodeLine
@@ -283,8 +313,8 @@ letToCode nfo cls body =
   withFreshVar2 "loc" "obj"             (\loc obj -> 
   sbind (addLine  "// let ")            (\_    -> 
   sbind (closureToCode nfo cls)         (\val1 -> 
-  sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ]) (\_ ->
-  sbind (addWords [ loc  , "[0] = (uint64_t) " , val1 , ";" ]) (\_ ->
+  sbind (addWords [ "stack_ptr " , loc  , " = rts_stack_allocate(1);" ])        (\_ ->
+  sbind (addWords [ loc  , "[0] = (uint64_t) rts_force_value( (heap_ptr) " , val1 , ");" ]) (\_ ->
   sbind (evalExprToReg nfo "body" body) (\res -> 
   sbind (addDefin obj res)              (\_   ->    
   sbind (addWords [ "SP = " , loc , ";" ]) (\_ -> 
@@ -301,7 +331,7 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
     -- allocate closures
     , sforM_ (zipIndex cls_list) (\pair -> case pair of { Pair j cls -> case cls of { ClosureF cbody env arity ->
         case cbody of 
-          { InlineBody lifted -> sbind (functionBodyToCode nfo (StatFun (length env) arity lifted)) (\res ->
+          { InlineBody lifted -> sbind (inlineFunctionBodyToCode nfo (StatFun (length env) arity lifted)) (\res ->
              addWords [ pre_sp, "[", showInt j , "] = (uint64_t) (" , res , " );" ]) 
           ; StaticBody static -> case env of
              { Nil -> addWords [ pre_sp, "[", showInt j , "] = static_stack[" , showInt static , "];" ] 
@@ -314,14 +344,14 @@ letrecToCode nfo n cls_list body = withFreshVar3 "obj" "pre_sp" "post_sp" (\obj 
           { InlineBody _ -> sreturn Unit
           ; StaticBody _ -> case env of { Nil -> sreturn Unit ; _ -> withFreshVar "tgt" (\tgt -> sseq
               (addDefin tgt (concat [ "(heap_ptr) " , pre_sp , "[", showInt j , "]" ]))
-              (copyEnvironmentTo nfo "SP" tgt 1 env) )} }}})
+              (copyEnvironmentTo nfo tgt 1 env) )} }}})
     , sbind (evalExprToReg nfo "body" body) (\res -> addDefin obj res)   
     , addWords [ "SP = " , pre_sp , ";" ]
     ]) (sreturn obj))
 
 -- NB: heap constructor tag should be compatible with the nullary constructor tag
-caseOfToCode :: StatInfo -> Atom -> List BranchF -> CodeGenM Name
-caseOfToCode nfo atom branches = 
+caseOfToCode :: StatInfo -> LAtom -> List BranchF -> CodeGenM Name
+caseOfToCode nfo latom branches = case latom of { Located srcloc atom ->  
   sbind (freshVar "tagword"  ) (\tagword   -> 
   sbind (freshVar "result"   ) (\result    -> 
   sbind (freshVar "scrutinee") (\scrutinee -> 
@@ -335,11 +365,14 @@ caseOfToCode nfo atom branches =
     , addWords [ "if IS_HEAP_PTR(" , scrutinee, ") " , tagword , " = " , scrutinee , "[0]; else " , tagword , " = (intptr_t)" , scrutinee , " ;" ]
     , addWords [ "switch(" , tagword , ") {" ]
     , smapM_ (worker result scrutinee) branches
-    , swhen (not (hasDefaultF branches)) 
-        (addWords [ "default: rts_internal_error(" , doubleQuoteString "non-exhaustive patterns in case" , ");" ])
+    , swhen (not (hasDefaultF branches)) (ssequence_
+        [ addWords [ "default:" ]
+        -- , addWords [ "rts_debug_println(" , doubleQuoteString "scrutinee" , "," , scrutinee , ");" ]
+        , addWords [ "rts_internal_error(" , doubleQuoteString (append "non-exhaustive patterns in case, at " (escapedShowLocation srcloc)) , ");" ]
+        ] )
     , addLine  "}"
     , addWords [ "SP = " , oldsp , " ;   // branches allocate ?! " ]
-    ]) (\_ -> sreturn result )))))
+    ]) (\_ -> sreturn result ))))) }
   where 
     { worker result scrutinee branch = case branch of
         { DefaultF closure -> ssequence_
@@ -358,7 +391,7 @@ caseOfToCode nfo atom branches =
                   { InlineBody _ -> sreturn Unit
                   ; StaticBody _ -> swhen (not (isNil env)) (sseq 
                       (addWords [ "stack_ptr " , envptr , " =  rts_stack_allocate(" , showInt (length env) , ");" ])
-                      (copyEnvironmentTo nfo base envptr 0 env)) }
+                      (copyEnvironmentTo nfo envptr 0 env)) }
               , case cbody of
                   { InlineBody lifted -> sbind (liftedToCode nfo lifted) (\res -> addSetValue result res)
                   ; StaticBody static -> sbind (callStatic static      ) (\res -> addSetValue result res) }
@@ -368,41 +401,60 @@ caseOfToCode nfo atom branches =
 -- ** application
 
 -- | Note the `reverse` - we put everything in reverse order to the stack!
-copyEnvironmentTo' :: StatInfo -> Name -> Name -> Int -> List Atom -> CodeGenM_
-copyEnvironmentTo' nfo from target ofs env = sforM_ (zipIndex (reverse env)) (\pair -> case pair of { Pair j atom -> 
+copyEnvironmentTo' :: StatInfo -> Name -> Int -> List Atom -> CodeGenM_
+copyEnvironmentTo' nfo target ofs env = sforM_ (zipIndex (reverse env)) (\pair -> case pair of { Pair j atom -> 
   let { setTarget = concat [ target , "[" , showInt (plus j ofs) , "] = (uint64_t) " ] } 
   in  case atom of
-    { VarA nvar -> case nvar of { Named name var -> case var of  
-      { IdxV idx  -> addWords [ setTarget , "DE_BRUIJN_FROM(" , from , "," , showInt idx , ");    // " , name ] 
-      ; TopV stat -> addWords [ setTarget , loadVar nfo var , " ;    // " , name ] }}
+    { VarA nvar -> case nvar of { Named name var ->
+           addWords [ setTarget , loadVar  nfo var  , ";    // " , name ] } 
     ; _ -> addWords [ setTarget , loadAtom nfo atom , ";"] }})
 
-idxToAtom :: String -> Idx -> Atom
-idxToAtom name i = VarA (Named name (IdxV i))
+-- idxToAtom :: String -> Idx -> Atom
+-- idxToAtom name i = VarA (Named name (IdxV i))
 
-copyEnvironmentTo :: StatInfo -> Name -> Name -> Int -> List Idx -> CodeGenM_
-copyEnvironmentTo nfo from target ofs env = copyEnvironmentTo' nfo from target ofs (map (idxToAtom "xxx") env)
+levToAtom :: String -> Level -> Atom
+levToAtom name j = VarA (Named name (LevV j))
 
--- copy the args, then copy the environment (everything is in reverse oreder), assembling these on the stack
+copyEnvironmentTo :: StatInfo -> Name -> Int -> List Idx -> CodeGenM_
+copyEnvironmentTo nfo target ofs env = copyEnvironmentTo' nfo target ofs (map (levToAtom "xxx") env)
+
+-- copy the args, then copy the environment (everything is in reverse order), assembling these on the stack
 assembleClosureArgs' :: StatInfo -> List Idx -> List Atom -> CodeGenM Name
 assembleClosureArgs' nfo env args = let { envsize = length env ; nargs = length args ; ntotal = plus envsize nargs } in 
   ifte (eq ntotal 0) (sreturn "NULL") 
   ( withFreshVar "loc" (\loc -> sseq (ssequence_
     [ addWords [ "stack_ptr " , loc , " = rts_stack_allocate(" , showInt ntotal , ");" ]
-    , copyEnvironmentTo' nfo loc loc 0     args
-    , copyEnvironmentTo  nfo loc loc nargs env 
+    , copyEnvironmentTo' nfo loc 0     args
+    , copyEnvironmentTo  nfo loc nargs env 
     ]) (sreturn loc) ))
 
 assembleClosureArgs :: StatInfo -> List Idx -> List Idx -> CodeGenM Name
-assembleClosureArgs nfo env args = assembleClosureArgs' nfo env (map (idxToAtom "xxx") args)
+assembleClosureArgs nfo env args = assembleClosureArgs' nfo env (map (levToAtom "xxx") args)
 
 genericApplicationTo :: StatInfo -> Name -> List Atom -> CodeGenM Name
 genericApplicationTo nfo funvar args = let { nargs = length args } in 
   withFreshVar "fresult"                    (\finalres -> 
   sbind (assembleClosureArgs' nfo Nil args) (\tmp      ->
   sbind (addWords [ "heap_ptr " , finalres , " = rts_apply( " , funvar , " , " , showInt nargs , " );" ]) (\_ ->
-  sbind (addWords [ "// SP = " , tmp , ";   // callee cleans up" ]) 
-        (\_ -> (sreturn finalres) ))))
+        (sreturn finalres) )))
+
+-- | We need to push arguments first, /then/ evaluate the code resulting in the lambda,
+-- because the latter can allocate, and allocation can trigger GC, which needs the gc roots
+-- on the stack! OOPS, but this ruins de Bruijn indices...
+--
+-- TODO: FIX THIS
+genericApplicationToLifted :: StatInfo -> Lifted -> List Atom -> CodeGenM Name
+genericApplicationToLifted nfo fun args = let { nargs = length args } in 
+  withFreshVar "fresult"                    (\finalres -> 
+  sbind (evalExprToReg nfo "zfun" fun)      (\funvar   ->    
+  sbind (assembleClosureArgs' nfo Nil args) (\tmp      ->
+  sbind (addWords [ "heap_ptr " , finalres , " = rts_apply( " , funvar , " , " , showInt nargs , " );" ]) (\_ ->
+        (sreturn finalres) ))))
+
+genericCall :: StatInfo -> Name -> Int -> CodeGenM Name
+genericCall nfo funvar nargs = withFreshVar "gres" (\gres -> sseq 
+  (addWords [ "heap_ptr " , gres , " = rts_apply( " , funvar , " , " , showInt nargs , " );" ]) 
+  (sreturn gres))
 
 callStatic :: Static -> CodeGenM Name
 callStatic sidx = withFreshVar "result" (\var -> sseq
@@ -412,21 +464,21 @@ callStatic sidx = withFreshVar "result" (\var -> sseq
 callClosureBody :: StatInfo -> ClosureF -> CodeGenM Name
 callClosureBody nfo closure = case closure of { ClosureF cbody env arity -> case cbody of
   { StaticBody static -> callStatic static
-  ; InlineBody lifted -> functionBodyToCode nfo (StatFun (length env) arity lifted) }}
+  ; InlineBody lifted -> inlineFunctionBodyToCode nfo (StatFun (length env) arity lifted) }}
 
 applyClosure :: StatInfo -> ClosureF -> List Atom -> CodeGenM CodeLine
 applyClosure nfo closure args = case closure of { ClosureF cbody env fun_arity -> 
   let { nargs = length args ; envsize = length env ; ntotal = plus envsize fun_arity } in case compare nargs fun_arity of
-    { EQ -> sbind (assembleClosureArgs' nfo env args) (\tmp -> callClosureBody nfo closure)
-    ; GT -> sbind (assembleClosureArgs' nfo env (take fun_arity args)) (\tmp    -> 
-            sbind (callClosureBody nfo closure)                        (\funres -> 
-                  (genericApplicationTo nfo funres (drop fun_arity args))))
+    { EQ -> sbind (assembleClosureArgs' nfo env args)   (\tmp -> callClosureBody nfo closure)
+    ; GT -> sbind (assembleClosureArgs' nfo env args)   (\tmp    -> 
+            sbind (callClosureBody nfo closure)         (\funres -> 
+                  (genericCall nfo funres (minus nargs fun_arity))))
     ; LT -> case cbody of
         { InlineBody _      -> error "applyClosure: underapplication of inlined closure (?!?)"
         ; StaticBody static -> withFreshVar "obj" (\obj -> sseq (ssequence_
               [ addWords [ "heap_ptr ", obj , " = rts_allocate_closure( " , showInt static , " , " , showInt ntotal , " , " , showInt (minus fun_arity nargs) , " );" ]
-              , copyEnvironmentTo' nfo "SP" obj  1          args
-              , copyEnvironmentTo  nfo "SP" obj (inc nargs) env 
+              , copyEnvironmentTo' nfo obj  1          args
+              , copyEnvironmentTo  nfo obj (inc nargs) env 
               ]) (sreturn obj)) } } }
 
 applicationToCode :: StatInfo -> Lifted -> List Atom -> CodeGenM CodeLine
@@ -435,10 +487,13 @@ applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ 
   ; AtmF atom    -> case atom of
     { ConA named   -> let { nargs = length args} in case named of { Named dcon_name con -> withFreshVar "obj" (\obj -> sseq (ssequence_
         [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
-        , copyEnvironmentTo' nfo "SP" obj 1 (reverse args)
+        , copyEnvironmentTo' nfo obj 1 (reverse args)
         ]) (sreturn obj)) }
-    ; _ -> sbind (evalExprToReg nfo "afun" fun) (\funvar -> genericApplicationTo nfo funvar args) }
-  ; _   -> sbind (evalExprToReg nfo "gfun" fun) (\funvar -> genericApplicationTo nfo funvar args) }}
-           -- TODO ^^^ fix this ^^^
+    -- TODO: optimize top-level calls
+    -- ; VarA named -> case named of { Named name var -> case var of
+    --     { TopV j -> 
+    --     ; _ -> genericApplicationToLifted nfo fun args } 
+    ; _     -> genericApplicationToLifted nfo fun args }
+  ; _       -> genericApplicationToLifted nfo fun args }}
 
 --------------------------------------------------------------------------------

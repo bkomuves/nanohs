@@ -221,7 +221,7 @@ eval env term = case term of
     ; _    -> error "eval: unrecognized lazy primop" }}
   ; LetT t1 t2    -> eval (pushEnv1 (eval env t1) env) t2
   ; LamT body     -> LamV (\x -> eval (pushEnv1 x env) (forgetName body))
-  ; CasT atom brs -> case evalAtom env atom of
+  ; CasT atom brs -> case evalAtom env (located atom) of
     { ConV con args -> matchCon env con args brs
     ; _             -> error "eval: branching on a non-constructor" }
   ; RecT n ls tm -> let { env' = pushEnvMany (map (mkThunk env') ls) env } in eval env' tm

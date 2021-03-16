@@ -99,13 +99,14 @@ collectDataConsWorker expr = go expr where
     ; LamE _ body -> go body
     ; LetE defs body -> goLet defs body
     ; RecE defs body -> goLet defs body
-    ; CaseE e branches -> sseq (go e) (smapM_ (\br -> case br of
+    ; CaseE e branches -> sseq (lgo e) (smapM_ (\br -> case br of
         { BranchE con _ rhs -> sbind (insert con) (\_ -> go rhs)
         ; DefaultE      rhs -> go rhs }) branches)
     ; LitE _     -> sreturn Unit
     ; ListE list -> smapM_ go list
     ; PrimE _ as -> smapM_ go as
     } 
+  ; lgo lexpr = case lexpr of { Located loc expr -> sfmap (Located loc) (go expr) } 
   ; goLet defs body = sseq 
       (smapM_ (\defin -> case defin of { Defin _ rhs -> go rhs }) defs ) (go body) }
 

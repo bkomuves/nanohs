@@ -98,22 +98,24 @@ showLiteral lit = case lit of
 --------------------------------------------------------------------------------
 -- ** Variables
 
--- | Variables can be a de Bruijn index, or a top-level definition, or a static string index
+-- | Variables can be a de Bruijn index, or level, or a top-level definition, or a static string index
 data Var
   = IdxV Idx
+  | LevV Level
   | TopV Static
   | StrV Int
   deriving Show
 
 -- | Shift de Bruijn indices in variables
-shiftVar :: Int -> Var -> Var
-shiftVar ofs var = case var of { IdxV i -> IdxV (plus i ofs) ; _ -> var }
+shiftVarIndex :: Int -> Var -> Var
+shiftVarIndex ofs var = case var of { IdxV i -> IdxV (plus i ofs) ; _ -> var }
 
 prettyVar :: Var -> String
 prettyVar var = case var of 
-  { IdxV i -> concat [  "de_Bruijn(" , showInt i , ")" ] 
-  ; TopV j -> concat [ "static_fun(" , showInt j , ")" ] 
-  ; StrV k -> concat [ "static_str(" , showInt k , ")" ]}
+  { IdxV i -> concat [ "de_Bruijn_idx(" , showInt i , ")" ] 
+  ; LevV j -> concat [ "de_Bruijn_lev(" , showInt j , ")" ] 
+  ; TopV k -> concat [ "static_fun("    , showInt k , ")" ] 
+  ; StrV m -> concat [ "static_str("    , showInt m , ")" ]}
 
 --------------------------------------------------------------------------------
 -- ** Atoms
@@ -126,8 +128,8 @@ data Atom
   deriving Show
 
 -- | Shift de Bruijn indices in atoms
-shiftAtom :: Int -> Atom -> Atom
-shiftAtom ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVar ofs) namedVar) ; _ -> atom }
+shiftAtomIndex :: Int -> Atom -> Atom
+shiftAtomIndex ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVarIndex ofs) namedVar) ; _ -> atom }
 
 prettyAtom :: Atom -> String
 prettyAtom atom = case atom of
@@ -172,10 +174,18 @@ showLocation :: Location -> String
 showLocation loc = case loc of { Loc fname pos1 pos2 -> concat
   [ "file " , doubleQuoteString fname , ", " , showSrcPos_ pos1 , "--" , showSrcPos_ pos2 ] }
 
+escapedShowLocation :: Location -> String
+escapedShowLocation loc = case loc of { Loc fname pos1 pos2 -> concat
+  [ "file " , escapedDoubleQuoteString fname , ", " , showSrcPos_ pos1 , "--" , showSrcPos_ pos2 ] }
+
 data Location  = Loc FilePath SrcPos SrcPos deriving Show
 data Located a = Located Location a         deriving Show
 
-type LName = Located Name
+type LName     = Located Name
+type LAtom     = Located Atom
+
+lfmap :: (a -> b) -> Located a -> Located b
+lfmap f located = case located of { Located loc x -> Located loc (f x) }
 
 locFn    loc = case loc of { Loc fn _ _    -> fn   }
 locStart loc = case loc of { Loc _  pos1 _ -> pos1 }

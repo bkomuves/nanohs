@@ -55,13 +55,15 @@ mbDefin toplev = case toplev of { TopDefin def -> Just def ; _ -> Nothing }
 
 --------------------------------------------------------------------------------
 
+type LExpr = Located Expr
+
 data Expr
   = VarE  LName
   | AppE  Expr Expr
   | LamE  Name Expr
   | LetE  (List DefinE) Expr
   | RecE  (List DefinE) Expr
-  | CaseE Expr (List BranchE)
+  | CaseE LExpr (List BranchE)
   | LitE  Literal
   | ListE (List Expr)
   | PrimE PrimOp (List Expr)
@@ -127,7 +129,7 @@ freeVars expr = go trieEmpty expr where
     ; LamE v body    -> go (trieSetInsert v bound) body
     ; LetE defs body -> goLets   bound defs body
     ; RecE defs body -> goLetRec bound defs body
-    ; CaseE what brs -> trieUnion (go bound what) (trieUnions (map (goBranch bound) brs))
+    ; CaseE what brs -> trieUnion (go bound (located what)) (trieUnions (map (goBranch bound) brs))
     ; LitE  _        -> trieEmpty
     ; ListE list     -> trieUnions (map (go bound) list)
     ; PrimE p list   -> trieUnions (map (go bound) list)
@@ -185,7 +187,7 @@ recogPrimApps1 = go where
       ; LamE arg  body -> LamE  arg  (go body)
       ; LetE defs body -> LetE  (map goDefin defs) (go body)
       ; RecE defs body -> RecE  (map goDefin defs) (go body)
-      ; CaseE what brs -> CaseE (go what) (map goBranch brs)
+      ; CaseE what brs -> CaseE (lfmap go what) (map goBranch brs)
       ; ListE exprs    -> ListE (map go exprs)
       ; _              -> expr }
   ; goBranch branch = case branch of
@@ -218,13 +220,14 @@ extractStringConstants1 expr = go expr where
     ; LamE  n body   -> sfmap  (LamE n) (go body)
     ; LetE  defs rhs -> sliftA2 LetE  (smapM goDefin defs) (go rhs)
     ; RecE  defs rhs -> sliftA2 RecE  (smapM goDefin defs) (go rhs)
-    ; CaseE what brs -> sliftA2 CaseE (go what) (smapM goBranch brs)
+    ; CaseE what brs -> sliftA2 CaseE (lgo what) (smapM goBranch brs)
     ; ListE ls       -> sfmap   ListE (smapM go ls)
     ; PrimE pri args -> sfmap  (PrimE pri) (smapM go args) }
   ; goDefin  defin  = case defin of { Defin name rhs -> sfmap (Defin name) (go rhs) }
   ; goBranch branch = case branch of 
     { BranchE con args rhs -> sfmap (BranchE con args) (go rhs)
-    ; DefaultE         rhs -> sfmap (DefaultE        ) (go rhs) } }
+    ; DefaultE         rhs -> sfmap (DefaultE        ) (go rhs) } 
+  ; lgo lexpr = case lexpr of { Located loc expr -> sfmap (Located loc) (go expr) } }
 
 --------------------------------------------------------------------------------
 
