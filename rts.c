@@ -10,7 +10,7 @@
 #define MAX(a,b)   (((a)>=(b))?(a):(b))
 
 #define STACK_SIZE   (1024*1024)
-#define HEAP_SIZE    (     1024)
+#define HEAP_SIZE    (1024*1024)
 #define HEAP_EXTRA         1024
 
 typedef uint64_t *heap_ptr;
@@ -31,17 +31,15 @@ typedef heap_ptr generic_fun_t();
 int       NStatic;
 int       NTopLev;
 int       NStrings;
+int       ArgCount;
 void    **StaticFunPointers;
 int      *StaticFunArities;
 int      *TopLevelIndices;
 char    **ConstructorNames;
 char    **StaticStringTable;
 heap_ptr *HeapStringTable;
+heap_ptr *ArgStringTable;
 stack_ptr static_stack;
-
-// command line arguments
-int    ArgCount;
-char **ArgVector;
 
 // pointer tagging
 #define PTAG_PTR  0       // allocated heap object 
@@ -223,6 +221,12 @@ void rts_perform_gc(int min_extra_space) {
     if (ptr) { HeapStringTable[j] = rts_gc_worker( ptr ); }
   }
 
+  // walk the argument list strings - we need these live too
+  for(int j=0;j<ArgCount;j++) { 
+    heap_ptr ptr = ArgStringTable[j];
+    if (ptr) { ArgStringTable[j] = rts_gc_worker( ptr ); }
+  }
+
   free(Heap_begin);   
   Heap_begin = New_Heap_begin;
   Heap_end   = New_Heap_end;
@@ -243,7 +247,7 @@ heap_ptr rts_heap_allocate(int size) {
   heap_ptr obj = HP;
   HP += size;
 
-  if (1) { // (HP >= Heap_end) { 
+  if (HP >= Heap_end) { 
     // rts_internal_error("heap overflow");
     HP = obj;
     rts_perform_gc(size);
@@ -655,7 +659,6 @@ void rts_initialize(int argc, char **argv) {
   if (sizeof(void*) != 8) { rts_internal_error("fatal: expecting a 64 bit architecture"); }
 
   ArgCount  = argc;
-  ArgVector = argv;
 
   rsp_begin = rsp;
   rsp_last  = rsp_begin;
@@ -670,6 +673,13 @@ void rts_initialize(int argc, char **argv) {
   HP = Heap_begin;
   Last_compacted_heap_size = heap_size;
 
+  // we have to pre-fill these with NULL-s because GC can happen while
+  // we are filling them. The GC checks these for null-pointers.
+  HeapStringTable = (heap_ptr*) malloc_words(NStrings);
+  ArgStringTable  = (heap_ptr*) malloc_words(ArgCount);
+  for(int i=0;i<NStrings;i++)  { HeapStringTable[i] = NULL; }
+  for(int i=0;i<ArgCount ;i++) { ArgStringTable [i] = NULL; }
+
   // initialize static stack. This simulates a top-level letrec, but with a 
   // letrec we couldn't really optimize the fully static function calls?
   static_stack = (heap_ptr) malloc_words( NStatic );
@@ -680,9 +690,10 @@ void rts_initialize(int argc, char **argv) {
   // at random points... BUT after the static stack above, because the GC
   // will look at those too for roots... (because after they are evaluated
   // below, they can become real heap objects)
-  HeapStringTable = (heap_ptr*) malloc_words(NStrings);
-  for(int i=0;i<NStrings;i++) { HeapStringTable[i] = NULL; }
   for(int i=0;i<NStrings;i++) { HeapStringTable[i] = rts_marshal_from_cstring( StaticStringTable[i] ); }
+
+  // marshal command line arguments, too
+  for(int j=0;j<ArgCount;j++) { ArgStringTable[j] = rts_marshal_from_cstring( argv[j] ); }
 
   // evaluate top-level non-lambdas (they cannot be recursive if the compiler works correctly)
   // note: this includes `main`. Since we reorder by dependency, it's OK.
@@ -794,9 +805,9 @@ heap_ptr prim_Error(heap_ptr arg1) {
 // getArg# :: Int -> Maybe String
 heap_ptr prim_GetArg(heap_ptr arg1) {
   int j = TO_INT(arg1);
-  if ( (j >= 0) && (j < ArgCount - 1) ) {
+  if ( (j >= 0) && (j < ArgCount - 1) ) { 
     heap_ptr obj = rts_allocate_datacon(CON_Just,1);
-    obj[1] = (uint64_t) rts_marshal_from_cstring(ArgVector[j+1]); 
+    obj[1] = (uint64_t) ArgStringTable[j+1];
     return obj;
   }
   return NOTHING;
