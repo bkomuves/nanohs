@@ -5,12 +5,13 @@
 #include <string.h>
 
 // #define DEBUG_GC
+// #define DEBUG_C_STACK
 
 #define MAX(a,b)   (((a)>=(b))?(a):(b))
 
 #define STACK_SIZE   (1024*1024)
-#define HEAP_SIZE    (     10)
-#define HEAP_EXTRA         10
+#define HEAP_SIZE    (     1024)
+#define HEAP_EXTRA         1024
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
@@ -137,9 +138,9 @@ heap_ptr New_HP;
 
 heap_ptr rts_gc_worker(heap_ptr root) {
 
-//printf("gc root: "); 
-//rts_print_heap_pointer(root);
-//fflush(stdout); 
+   //printf("gc root: "); 
+   //rts_print_heap_pointer(root);
+   //fflush(stdout); 
 
   if (IS_HEAP_PTR(root)) {
     // closure or data constructor
@@ -172,17 +173,6 @@ heap_ptr rts_gc_worker(heap_ptr root) {
     //copy payload
     for(int i=0; i<size; i++) { tgt[i+1] = (uint64_t) rts_gc_worker( (heap_ptr) root[i+1] ); }  
 
-    // DEBUG VERSION
-    //for(int i=0; i<size; i++) { 
-    //  heap_ptr old = (heap_ptr) root[i+1];
-    //  heap_ptr new = rts_gc_worker( old );  
-    //  tgt[i+1] = (uint64_t) new;
-    //  if (GC_COUNTER == 6) {
-    //    printf("root:   "); rts_print_heap_pointer( old );
-    //    printf("reloc:  "); rts_print_heap_pointer( new );
-    //  }
-    //}
-
     return tgt;
   } 
   else {
@@ -203,8 +193,9 @@ void rts_perform_gc(int min_extra_space) {
   New_HP = New_Heap_begin;
 
 #ifdef DEBUG_GC
-  // printf("BEFORE GC\n"); rts_print_stack_and_heap();
+  printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
   printf("performing GC #%d...\n",GC_COUNTER);
+  printf("BEFORE GC\n"); rts_print_stack_and_heap();
   printf("old heap size = %llu words\n",cur_heap_size);
   printf("new heap size = %llu words\n",new_heap_size);
   printf("old heap:  %p -> %p\n",    Heap_begin,    Heap_end);
@@ -227,7 +218,7 @@ void rts_perform_gc(int min_extra_space) {
   // walk the heap allocated strings - we need these live too
   for(int j=0;j<NStrings;j++) { 
     // oops! it can happen tht we are still allocating these but a GC already happens...
-    // so we have the initialize with null pointers and check 
+    // so we have the initialize with null pointers and check for being non-NULL
     heap_ptr ptr = HeapStringTable[j];
     if (ptr) { HeapStringTable[j] = rts_gc_worker( ptr ); }
   }
@@ -240,7 +231,7 @@ void rts_perform_gc(int min_extra_space) {
 
 #ifdef DEBUG_GC
   printf("compacted heap size = %llu words\n",Last_compacted_heap_size);
-  // printf("AFTER GC\n"); rts_print_stack_and_heap();
+  printf("AFTER GC\n"); rts_print_stack_and_heap();
 #endif
 
 }
@@ -248,22 +239,11 @@ void rts_perform_gc(int min_extra_space) {
 // -----------------------------------------------------------------------------
 // allocation
 
-// #define SP_GRANULARITY (   512*1024)
-// #define HP_GRANULARITY (8*1024*1024)
-// heap_ptr SP_threshold;
-// heap_ptr HP_threshold;
-
 heap_ptr rts_heap_allocate(int size) {
   heap_ptr obj = HP;
   HP += size;
-//    // heap debugging
-//    if (HP >= HP_threshold) {
-//      int k = HP_threshold - Heap_begin;
-//      int mb = k / 1024/1024;
-//      fprintf(stderr,"HP threshold: %d million words\n",mb);
-//      HP_threshold = HP_threshold + HP_GRANULARITY;
-//    }
-  if (HP >= Heap_end) { 
+
+  if (1) { // (HP >= Heap_end) { 
     // rts_internal_error("heap overflow");
     HP = obj;
     rts_perform_gc(size);
@@ -275,11 +255,13 @@ heap_ptr rts_heap_allocate(int size) {
 
 stack_ptr rts_stack_allocate(int size) {
 
+#ifdef DEBUG_C_STACK
   int k = rsp_last - rsp;
   if (k >= 1024*1024) {
     rsp_last = rsp;
     printf("c stack size = %llu bytes\n" , rsp_begin - rsp);
   }
+#endif
 
   stack_ptr loc = SP;
   SP += size;
@@ -314,16 +296,17 @@ int rts_marshal_to_cstring(int nmax, char *target, heap_ptr source) {
   return i;
 }
 
+// This is rather tricky because of garbage collection can happen
+// at any point...
 heap_ptr rts_marshal_from_cstring(const char *str) {
   char c = str[0];
   if (c != 0) {
-    heap_ptr rest = rts_marshal_from_cstring(str+1);
-    // ^^^ again, we have to be careful about allocation order here
-    // we don't want an unfilled thing on the heap while another
-    // allocation (hence: another GC) can happen...
-    heap_ptr obj  = rts_allocate_datacon(CON_Cons,2);
+    heap_ptr rest = rts_marshal_from_cstring(str+1);   // allocate the remaining part
+    *(SP++) = (uint64_t) rest;                         // push it on the stack so the GC sees it
+    heap_ptr obj  = rts_allocate_datacon(CON_Cons,2);  // allocate a the final Cons
     obj[1] = (uint64_t) CHR_LITERAL(c);
-    obj[2] = (uint64_t) rest;
+    obj[2] = (uint64_t) SP[-1];                        // note that `rest` could have been moved!!
+    SP--;                                              // pop the stack
     return obj;
   }
   else return NIL;
@@ -500,27 +483,29 @@ heap_ptr rts_static_call(int statidx) {
 //}
 
 // these are mutually recursive
-heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t *env, int nargs);
+heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, heap_ptr env_obj, int nargs);
 heap_ptr rts_apply       (heap_ptr funobj, int nargs);
 
 // arguments are on the stack, in *reverse order*, and environment is also in reverse order
-heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t *env, int nargs) {
+heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, heap_ptr env_obj, int nargs) {
 //printf("rts_apply_worker %d <%d> %d %d\n",static_arity,statfun,env_size,nargs);
   int ntotal = env_size + nargs;
   if (ntotal == static_arity) {
     // saturated call
     // stack_ptr frame = SP - nargs;
     stack_ptr mid   = rts_stack_allocate( env_size );
-    for(int i=0; i<env_size; i++) { mid[i] = env[i]; }
+    for(int i=0; i<env_size; i++) { mid[i] = env_obj[i+1]; }
     heap_ptr result = rts_static_call( statfun );
     return result;
   }
   if (ntotal < static_arity) {
     // undersaturated call
     stack_ptr frame = SP - nargs;
+    *(SP++) = (uint64_t) env_obj;  // NB: allocation can move the object we copy the environment from!!
     heap_ptr obj = rts_allocate_closure( statfun , ntotal , static_arity - ntotal);
-    for(int j=0; j<nargs   ; j++) { obj[      j+1] = frame[j]; }
-    for(int i=0; i<env_size; i++) { obj[nargs+i+1] = env  [i]; }
+    heap_ptr new_env = (heap_ptr) *(--SP);
+    for(int j=0; j<nargs   ; j++) { obj[      j+1] = frame  [j];   }
+    for(int i=0; i<env_size; i++) { obj[nargs+i+1] = new_env[i+1]; }
     SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
     return obj;
   }
@@ -530,7 +515,7 @@ heap_ptr rts_apply_worker(int static_arity, int statfun, int env_size, uint64_t 
     int rem_arity  = ntotal - static_arity;
     // stack_ptr frame = SP - nargs;
     heap_ptr mid = rts_stack_allocate( env_size );
-    for(int i=0; i<env_size; i++) { mid[i] = env[i]; }
+    for(int i=0; i<env_size; i++) { mid[i] = env_obj[i+1]; }
     heap_ptr result1 = rts_static_call( statfun );
     heap_ptr result2 = rts_apply( result1 , rem_arity ) ;
     return result2;
@@ -551,14 +536,16 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
           int rem_arity = (tagword & 0xffff) >> 3;
           int env_size  = (tagword >> 16) & 0xffff;
           int statfun   = (tagword >> 32);
-          return rts_apply_worker( env_size+rem_arity, statfun, env_size, funobj+1, nargs);
+          return rts_apply_worker( env_size+rem_arity, statfun, env_size, funobj, nargs);
         }
         // data constructor
         case HTAG_DCON: {
           int con       = (tagword & 0xffff) >> 3;
           int old_arity = (tagword >> 16) & 0xffff;
+          *(SP++) = (uint64_t)funobj;   // NB: the GC can move funobj!!!
           heap_ptr obj = rts_allocate_datacon(con, old_arity+nargs);
-          for(int i=0;i<old_arity;i++) { obj[i+1]           = funobj[i+1];        }
+          heap_ptr funnew = (heap_ptr) *(--SP);
+          for(int i=0;i<old_arity;i++) { obj[i+1]           = funnew[i+1];        }
           for(int j=0;j<nargs    ;j++) { obj[old_arity+1+j] = args  [nargs-j-1];  }  // arguments are opposite order, but constructors fields are not?
           SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
           return obj;
@@ -584,7 +571,7 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
     case PTAG_FUN: {
       int static_idx = ((int64_t)funobj) >> 3;
       int   arity  = StaticFunArities [static_idx];
-      return rts_apply_worker( arity, static_idx, 0, NULL, nargs);
+      return rts_apply_worker( arity, static_idx, 0, UNIT, nargs);
     }
 
     default:
@@ -608,7 +595,8 @@ heap_ptr rts_force_value(heap_ptr obj) {
           int env_size  = (tagword >> 16) & 0xffff;
           if (rem_arity > 0) { return obj; } else {
             int statfun  = (tagword >> 32);
-            return rts_apply_worker( env_size, statfun, env_size, obj+1, 0);
+            // printf("!!! forcing heap object %p\n",obj);         
+            return rts_apply_worker( env_size, statfun, env_size, obj, 0);
           } }
         // data con
         default: return obj;
@@ -618,6 +606,7 @@ heap_ptr rts_force_value(heap_ptr obj) {
       int static_idx = ((int64_t)obj) >> 3;
       int arity = StaticFunArities[static_idx];
       if (arity>0) { return obj; } else { 
+        // printf("!!! forcing CAF %d\n",static_idx);         
         return rts_static_call(static_idx);   // CAF
     } }
     // anything else
@@ -671,9 +660,6 @@ void rts_initialize(int argc, char **argv) {
   rsp_begin = rsp;
   rsp_last  = rsp_begin;
 
-  // at the moment we allocate a closure (1 word) for each static function
-  // which is stupid, whatever...
-  // int heap_size = MAX( HEAP_SIZE , 128 + NStatic );
   int heap_size = HEAP_SIZE;
 
   Stack_begin = (heap_ptr) malloc_words( STACK_SIZE );
@@ -683,10 +669,6 @@ void rts_initialize(int argc, char **argv) {
   SP = Stack_begin;
   HP = Heap_begin;
   Last_compacted_heap_size = heap_size;
-
-//  SP_threshold = SP;
-//  HP_threshold = HP;
-//
 
   // initialize static stack. This simulates a top-level letrec, but with a 
   // letrec we couldn't really optimize the fully static function calls?

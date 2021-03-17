@@ -261,7 +261,7 @@ doInlineClosure tm = case tm of
   { LamT _     -> False
   ; AtmT _     -> True
   ; _          -> False }
-   -- le (termSize tm) 64 }
+   -- le (termSize tm) 64 }     -- TODO: this was temporary
 
 termToClosure :: Name -> Subs -> Level -> Term -> ClosM ClosureF
 termToClosure name subs level term = ifte (doInlineClosure term) 

@@ -310,6 +310,9 @@ lazyPrimToCode nfo prim args = case prim of
               sbind (addWords [ fres , " = " , res2 , "; }" ])        (\_ -> sreturn fres)))))))))
   ; _    -> error "unimplemented lazy primop" }
 
+-- TODO: hmm, what happens when the let-bound thing becomes a closure with zero arity but with
+-- some environment, so we want to evaluate it? the environment is on the heap, and may be
+-- this is the only closure which refers to it??? 
 letToCode :: StatInfo -> ClosureF -> Lifted -> CodeGenM Name
 letToCode nfo cls body = 
   withFreshVar3 "tmp" "loc" "obj"       (\tmp loc obj -> 

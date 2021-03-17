@@ -20,7 +20,13 @@ gcc -O -Wl,-stack_size -Wl,0x2000000 nanohs_stage1.c -o nanohs_stage1.exe
 echo "" ; echo "==================="
 echo "compiling a stage #2 compiler via stage #1"
 ./nanohs_stage1.exe -c Nano.hs nanohs_stage2.c 
-
-# echo "" ; echo "==================="
-# echo "comparing the stage #1 and stage #2 outputs:"
-# diff nanohs_stage1.c nanohs_stage2.c
+ 
+echo "" ; echo "==================="
+echo "comparing the stage #1 and stage #2 outputs:"
+DIFF=`diff -q nanohs_stage1.c nanohs_stage2.c`
+if [[ ! -z "$DIFF" ]]
+then
+  echo $DIFF
+else
+  echo OK.
+fi
