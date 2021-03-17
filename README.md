@@ -57,8 +57,8 @@ Compilation pipeline
 
 1. lexer
 2. parser
-3. TODO: partition recursive lets using dependency analysis
-4. inline small functions 
+3. partition recursive lets using dependency analysis
+4. TODO: inline small functions 
 5. recognize primops
 6. TODO: eliminate pattern matching into simple branching on constructors
 7. collect data constructors

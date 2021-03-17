@@ -1,0 +1,259 @@
+
+\documentclass{beamer}
+\mode<presentation>
+\usepackage{color}
+\usepackage{fancyvrb}
+\usefonttheme[onlymath]{serif}
+
+\title{Writing a self-hosting compiler \\ for a purely functional language\\
+{\footnotesize (work in progress)}}
+\author{Bal\'azs K\H{o}m\H{u}ves \\ {\small ({\tt bkomuves@gmail.com})}}
+\date{2021.03.24.}
+
+%------------------------------------------------------------------------------%
+
+\begin{document}
+
+\begin{frame}
+\titlepage
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{What is this?}
+
+This is an {\bf experiment} to write a minimalistic self-hosting compiler
+in a purely functional language. It's intended both as a learning
+experience (for myself) and an experiment in bootstrapping.\\[15pt]
+
+Goals:
+\begin{itemize}
+\item self-hosting compiler
+\item very small code-base
+\item bootstrappable using a Haskell implementation
+\item generated code should have ``acceptable'' quality \\[15pt]
+\end{itemize}
+
+Non-goals:
+\begin{itemize}
+\item a fully-featured language
+\item efficient compilation (the compiler can be slow)
+\item bootstrapping ``real'' compilers from this code base
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Why self-host?}
+
+Why do bootstrapping / self-hosting?\\[10pt]
+
+\begin{itemize}
+\item I like simple, self-contained stuff
+\item self-hosting is a philosophically desirable property
+\item future-proofness: If you can bootstrap from something simple, it won't bit-rot that easily
+\item it's a test of the maturity of the compiler
+\item the compiler itself is a very good test program! \\[15pt]
+\end{itemize}
+
+Exhibit A: Maru, a tiny self-hosting LISP dialect was successfully revived and
+extended by Attila.\\[15pt]
+
+Exhibit B: The York Haskell Compiler (forked from {\tt nhc98}) is now dead, apparently
+because \emph{nobody knows how to build it anymore}.
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{The language}
+
+The syntax and semantics is based on (strict) Haskell - the idea is that the compiler
+should be compilable by both GHC and itself.
+
+This makes development much easier!\\[20pt]
+
+The language is basically untyped call-by-value lambda calculus with data constructors
+and recursive lets.
+During parsing, Haskell features like type annotations, data type declarations, imports etc
+are simply ignored - but the compiler itself is a well-typed program!\\[20pt]
+
+In fact, a type checker should be probably added, after all; but I wanted to keep it simple.
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Language (non-)features}
+
+{\small
+\begin{itemize}
+\item no static type system (untyped lambda calculus) 
+\item na data type declarations (constructors are arbitrary capitalized names)
+\item no module system - instead, we have C-style includes
+\item strict language (exceptions: if-then-else, logical {\tt and}/{\tt or})
+\item ML-style side effects, but wrapped in a monad
+\item only simple pattern matching + default branch (TODO: nested patterns)
+\item no infix operators
+\item list construction syntax {\tt [a,b,c]} is supported
+\item no indentation syntax (only curly braces), except for top-level blocks
+\item only line comments, starting at the beginning of the line
+\item no escaping in character / string constants yet
+\item (universal polymorphic equality comparison primop)
+\end{itemize}
+}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Compilation pipeline}
+
+\begin{enumerate}
+\item lexing and parsing
+\item collecting string literals
+\item partition recursive lets into strongly connected components
+\item TODO: eliminate pattern matching into simple branching on constructors
+\item TODO: inline small functions + some basic optimization
+\item recognize primops
+\item collect data constructors
+\item scope checking \& conversion to core language
+\item closure conversion
+\item TODO: compile to an SSA intermediate language
+\item final code generation 
+\end{enumerate}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{The runtime system}
+
+The runtime system is relatively straightforward:
+
+{\small
+\begin{itemize}
+\item there is a heap, which can only contain closures and data constructors
+\item there is stack (separate from the C stack) which contains pointers to the heap
+\item heap pointers are tagged using the lowest 3 bits
+\item heap objects fitting into 61 bits (ints, chars, nullary constructors, static functions) are
+      not allocated, just stored in registers / on stack
+\item statically unknown application is implemented as a runtime primitive 
+\item there is a simple copying GC - the GC roots are simply the content of the stack
+      (plus statically known data)
+\item there are some debug features like printing heap objects
+\item primops: integer arithmetic; integer comparison; bitwise operations; lazy {\tt ifte/and/or}; basic IO.
+\end{itemize}
+}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Current state of the experiment}
+
+Repo: \url{https://github.com/bkomuves/nanohs}\\[15pt]
+
+Current state:
+\begin{itemize}
+\item it can compile itself successfully;
+\item the source code is not as nice as it could be;
+\item the generated code is pretty horrible;
+\item there are some desirable features missing.\\[15pt]
+\end{itemize}
+
+Code size:
+\begin{itemize}
+\item the compiler: $\sim 1700$ lines (required code)
+\item type annotations: $+500$ lines (ignored)
+\item the C runtime: $\sim 600$ lines (includes some debug features)
+\end{itemize}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Mistakes I made}
+
+{\small
+I made a huge amount of mistakes during the development, which made it much
+harder and longer than I expected.
+
+\begin{itemize}
+\item Trying to self-host before the compiler actually works. Writing a 
+compiler is hard work, you don't want to do it in a limited language!
+\item Not figuring out the precise semantics upfront:
+   \begin{itemize}
+   \item exact details of lazyness vs. strictness
+   \item controlling exactly where heap / stack allocations can happen
+   \item recursive lets
+   \end{itemize}
+\item Not having debugging support from early on (for example: good error messages, 
+      threading names \& source locations, RTS features)
+\item Trying to target assembly first, instead of a simpler target like C; it's just extra cognitive load
+\item Generatic code directly, without having a low-level IL
+\item Using de Bruijn indices (as opposed to levels) in generated code
+\end{itemize}
+}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}[fragile]{Example GC bug - Marshalling from C strings}
+
+{\footnotesize
+\begin{verbatim}
+       heap_obj marshal_from_cstring(char *cstring) { ...
+       
+v1:    obj    = heap_allocate(Cons,2);
+       obj[1] = cstring[0];
+       obj[2] = marshal_from_cstring(cstring+1);
+       return obj;
+       
+v2:    rest   = marshal_from_cstring(cstring+1);
+       obj    = heap_allocate(Cons,2);
+       obj[1] = cstring[0];
+       obj[2] = rest;
+       return obj;
+       
+v3:    rest   = marshal_from_cstring(cstring+1);
+                push(rest);
+       obj    = heap_allocate(Cons,2);
+       obj[1] = cstring[0];
+       obj[2] = pop();
+       return obj;
+\end{verbatim}
+}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Future work}
+
+I'm not convinced that it is worth hacking on this toy compiler (as opposed to work
+on a full-featured ``real'' compiler), but in any case, here is a TODO list:\\[10pt]
+
+\begin{itemize}
+\item add nested patterns, and patterns in lambda arguments
+\item do some optimizations, so that the generated code is better
+\item tail call elimination
+\item escaping in string constants
+\item compile to a low-level intermediate language first, and do codegen from that
+\item add a type system
+\item more backends:
+  \begin{itemize}
+  \item x86-64 assembly
+  \item x86-64 machine code (say, ELF object files)
+  \item some simple virtual machine?
+  \end{itemize}
+\end{itemize}
+
+\end{frame}
+
+
+%------------------------------------------------------------------------------%
+
+\end{document}
