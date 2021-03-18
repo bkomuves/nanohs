@@ -125,6 +125,8 @@ lt x y = _fromGhcBool ((Prelude.<)  x y)
 le :: Int -> Int -> Bool
 le x y = _fromGhcBool ((Prelude.<=) x y)
 
+--------------------------------------------------------------------------------
+
 {-# NOINLINE error #-}
 error :: String -> a
 error msg = Prelude.error (_toGhcString msg)

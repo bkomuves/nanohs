@@ -448,7 +448,7 @@ conP :: Parse Name
 conP = accept mbVarU
 
 keywordP :: String -> Parse String
-keywordP word = pbind identP (\v -> ifte (geq v word) (preturn word) pfail)
+keywordP word = pbind identP (\v -> ifte (stringEq v word) (preturn word) pfail)
 
 inParensP :: Parse a -> Parse a
 inParensP p = pbind (specP LParen) (\_ ->

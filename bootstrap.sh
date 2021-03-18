@@ -15,7 +15,7 @@ echo "" ; echo "==================="
 echo "compiling a stage #1 compiler via the bootstrapped one (stage #0)"
 ./nanohs_via_ghc.exe -c Nano.hs nanohs_stage1.c 
 echo "running gcc..."
-gcc -O -Wl,-stack_size -Wl,0x2000000 nanohs_stage1.c -o nanohs_stage1.exe
+gcc -O3 -Wl,-stack_size -Wl,0x2000000 nanohs_stage1.c -o nanohs_stage1.exe
 
 echo "" ; echo "==================="
 echo "compiling a stage #2 compiler via stage #1"

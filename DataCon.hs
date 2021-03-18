@@ -77,11 +77,10 @@ predefinedDataCons =
 -- * 10 = WriteMode
 -- * 11 = AppendMode
 -- * 12 = ReadWriteMode
--- * 11 = IO
--- * 12.. = user defined constructors
+-- * 13.. = user defined constructors
 --
--- We need to fix Int, Char, False, True, Unit, Nil, Cons, Just and Nothing
--- and the file modes because the primops use them
+-- We need to fix @Int@, @Char@, @False@, @True@, @Unit@, @Nil@, @Cons@, @Just@, @Nothing@, @Pair@
+-- and the file access modes because the primops use them
 --
 collectDataCons :: Program Expr -> DataConTable
 collectDataCons defins = snd (execState action initialDConState) where
