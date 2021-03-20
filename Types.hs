@@ -39,6 +39,12 @@ type Idx = Int
 -- | Constructor index
 type Con = Int
 
+-- | Size
+type Size = Int
+
+-- | Top-level index
+type Top = Int
+
 -- | Static function index
 type Static = Int
 
@@ -78,7 +84,28 @@ definedWhat defin = case defin of { Defin _ e -> e }
 definToPair :: Defin a -> Pair Name a
 definToPair def = case def of { Defin n rhs -> Pair n rhs }
 
-type Program a = List (Defin a)
+definToNamed :: Defin a -> Named a
+definToNamed def = case def of { Defin n rhs -> Named n rhs }
+
+namedToDefin :: Named a -> Defin a
+namedToDefin named = case named of { Named n x -> Defin n x }
+
+--------------------------------------------------------------------------------
+-- * Programs
+
+-- | We partition our programs into non-recursive definitions and mutually recursive blocks
+data Block a
+  = NonRecursive       (Defin a)
+  | Recursive    (List (Defin a))
+  deriving Show
+
+type Program a = List (Block a)
+
+forgetBlockStructure :: Program a -> List (Defin a)
+forgetBlockStructure prg = go prg where
+  { go blocks = case blocks of { Nil -> Nil ; Cons this rest -> case this of
+    { NonRecursive defin  -> Cons defin    (go rest) 
+    ; Recursive    defins -> append defins (go rest) } } }
 
 --------------------------------------------------------------------------------
 -- ** Literals
@@ -106,9 +133,13 @@ data Var
   | StrV Int
   deriving Show
 
--- | Shift de Bruijn indices in variables
-shiftVarIndex :: Int -> Var -> Var
-shiftVarIndex ofs var = case var of { IdxV i -> IdxV (plus i ofs) ; _ -> var }
+-- | Shift de Bruijn levels/indices in variables. Right means positive direction in levels, 
+-- negative direction in indices.
+shiftVarRight :: Int -> Var -> Var
+shiftVarRight ofs var = case var of 
+   { IdxV i -> IdxV (minus i ofs) 
+   ; LevV j -> LevV (plus  j ofs)
+   ; _      -> var } 
 
 prettyVar :: Var -> String
 prettyVar var = case var of 
@@ -128,8 +159,8 @@ data Atom
   deriving Show
 
 -- | Shift de Bruijn indices in atoms
-shiftAtomIndex :: Int -> Atom -> Atom
-shiftAtomIndex ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVarIndex ofs) namedVar) ; _ -> atom }
+shiftAtomRight :: Int -> Atom -> Atom
+shiftAtomRight ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVarRight ofs) namedVar) ; _ -> atom }
 
 prettyAtom :: Atom -> String
 prettyAtom atom = case atom of

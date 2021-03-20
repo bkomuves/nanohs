@@ -29,6 +29,7 @@ import Parser
 import Dependency
 import Core
 import ScopeCheck
+import Inliner
 import Closure
 import CodeGen
 
@@ -82,20 +83,27 @@ compile fname = do
   Prelude.putStrLn "\n----------------------------------\nTOPLEVEL DEFINS"
   Control.Monad.mapM_ Prelude.print (_toGhcList (recogPrimApps defins1))
 
-  let defins = reorderProgram defins1
-  Prelude.putStrLn "\n----------------------------------\nREORDERED TOPLEVEL DEFINS"
-  Control.Monad.mapM_ Prelude.print (_toGhcList (recogPrimApps defins))
-
-  let dconTrie = collectDataCons defins
+  let dconTrie = collectDataCons defins1
 --  Prelude.putStrLn "\n----------------------------------\nCONSTURCTORS"
 --  Control.Monad.mapM_ Prelude.print (_toGhcList (trieToList dconTrie))
 
-  let coreprg@(CorePrg coredefs mainTerm) = programToCoreProgram defins
+  let blocks = reorderProgram defins1
+  Prelude.putStrLn "\n----------------------------------\nREORDERED TOPLEVEL DEFINS"
+  Control.Monad.mapM_ Prelude.print (_toGhcList blocks)
+
+
+  let coreprg@(CorePrg coredefs mainTerm) = programToCoreProgram blocks
   Prelude.putStrLn "\n----------------------------------\nCORE"
   Control.Monad.mapM_ Prelude.print (_toGhcList coredefs)
   Prelude.print mainTerm
 
-  let lprogram = coreProgramToLifted coreprg
+  let coreprg'@(CorePrg coredefs' mainTerm') = coreprg -- inlineCorePrg 16 coreprg
+  Prelude.putStrLn "\n----------------------------------\nOPTIMIZED CORE"
+  Control.Monad.mapM_ Prelude.print (_toGhcList coredefs')
+  Prelude.print mainTerm
+
+
+  let lprogram = coreProgramToLifted coreprg'
       LProgram statfuns topidxs lmain = lprogram
   Prelude.putStrLn "\n----------------------------------\nLIFTED"
   Control.Monad.mapM_ Prelude.print (_toGhcList statfuns)

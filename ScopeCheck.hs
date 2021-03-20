@@ -41,19 +41,18 @@ nanoMainIs = "main"
 --------------------------------------------------------------------------------
 -- * conversion to core
    
-data CoreProgram 
-  = CorePrg (Program Term) Term 
-  deriving Show
-
 exprToCore :: DataConTable -> Scope -> Expr -> Term
 exprToCore dconTable iniScope expr = scopeCheck dconTable iniScope (recogPrimApps1 expr)
 
 programToCoreProgram :: Program Expr -> CoreProgram
-programToCoreProgram defins = CorePrg (map worker defins) main where
-  { duplicate n = concat [ "multiple declaration of " , quoteString n ]
-  ; topLevScope = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins))
-  ; dconTable   = collectDataCons defins
-  ; worker def  = case def of { Defin name expr -> Defin name (exprToCore dconTable topLevScope expr) } 
+programToCoreProgram blocks = CorePrg (map worker blocks) main where
+  { duplicate n  = concat [ "multiple declaration of " , quoteString n ]
+  ; defins_      = forgetBlockStructure blocks
+  ; topLevScope  = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins_))
+  ; dconTable    = collectDataCons defins_
+  ; worker block = case block of 
+      { NonRecursive defin  -> NonRecursive (     fmapDefin (exprToCore dconTable topLevScope)  defin )
+      ; Recursive    defins -> Recursive    (map (fmapDefin (exprToCore dconTable topLevScope)) defins) }
   ; no_main_err = \_ -> error (concat [ "entry point " , quoteString nanoMainIs , " not found" ]) 
   ; main = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
       { TopL k -> AtmT (VarA (Named nanoMainIs (TopV k))) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
@@ -96,18 +95,18 @@ scopeCheck dcontable = go 0 where
     ; StrE j     -> AtmT (VarA (Named (appendInt "str_" j) (StrV j)))
     ; AppE e1 e2 -> case mbAtom level scope e2 of
         { Just atom -> AppT (go level scope e1) atom
-        ; Nothing   -> LetT (go level scope e2) (AppT (go (inc level) scope e1) (VarA (Named "letx" (IdxV 0)))) }
+        ; Nothing   -> LetT (Named "letx" (go level scope e2)) (AppT (go (inc level) scope e1) (VarA (Named "letx" (IdxV 0)))) }
     ; LamE  name body -> LamT (Named name (go (inc level) (trieInsert name (LevL level) scope) body))
     ; LetE  defs body -> case defs of { Nil -> go level scope body ; Cons defin rest -> case defin of 
         { Defin name rhs -> let { tm = go level scope rhs ; scope' = trieInsert name (LevL level) scope }
-                            in  LetT tm (go (inc level) scope' (LetE rest body)) } }
+                            in  LetT (Named name tm) (go (inc level) scope' (LetE rest body)) } }
     ; RecE  defs body -> let { n = length defs ; level' = plus level n
         ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name (LevL j) scp }
         ; scope' = foldl f scope (zip (map definedName defs) (rangeFrom level n))
         } in RecT n (map (goDefin level' scope') defs) (go level' scope' body)
     ; CaseE lwhat brs -> case lwhat of { Located loc what -> case mbAtom level scope what of
         { Just atom -> goCase level scope loc atom brs
-        ; Nothing   -> LetT (go level scope what) (goCase (inc level) scope loc (VarA (Named "scrut" (IdxV 0))) brs) }}
+        ; Nothing   -> LetT (Named "scrut" (go level scope what)) (goCase (inc level) scope loc (VarA (Named "scrut" (IdxV 0))) brs) }}
     ; LitE  lit -> case lit of
         { StrL cs -> go level scope (ListE (map (\x -> LitE (ChrL x)) cs))
         ; _       -> AtmT (KstA lit) }
@@ -123,9 +122,10 @@ scopeCheck dcontable = go 0 where
   -- ; finishPrim :: PrimOp -> List (Either Term Atom) -> Int -> Term 
   ; finishPrim prim theEis ofs = let 
       { theVars = zipWithIndex (\i j -> VarA (Named (appendInt "parg" j) (IdxV i))) (reverse (range ofs)) 
+      ; nameIt var x = case var of { VarA named -> case named of { Named n _ -> Named n x }} 
       ; worker eis vars atoms = case eis of { Nil -> PriT prim (reverse atoms) ; Cons ei eis' -> case ei of
-          { Right atom -> worker eis' vars (Cons (shiftAtomIndex ofs atom) atoms) 
-          ; Left  term -> case vars of { Cons var vars' -> LetT term (worker eis' vars' (Cons var atoms)) }}}
+          { Right atom -> worker eis' vars (Cons (shiftAtomRight (negate ofs) atom) atoms) 
+          ; Left  term -> case vars of { Cons var vars' -> LetT (nameIt var term) (worker eis' vars' (Cons var atoms)) }}}
       } in worker theEis theVars Nil
   -- ; goPrim :: PrimOp -> Int -> Level -> Scope -> List (Either Term Atom) -> List Expr -> Term 
   ; goPrim prim ofs level scope newargs oldargs = case oldargs of 

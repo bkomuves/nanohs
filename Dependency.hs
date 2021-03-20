@@ -56,15 +56,15 @@ partitionLets defins = map (compose mkLet (map lkp)) sccs where
   }
 
 -- | Top-level everything is letrec, but we still do the reordering and check for "lambdas only" condition?
-reorderProgram :: Program Expr -> Program Expr
-reorderProgram list = worker (reorderLets (RecE list (VarE (fakeLocated "$main")))) where
+reorderProgram :: List (Defin Expr) -> Program Expr
+reorderProgram list = worker (reorderLets (RecE list MainE)) where
   { worker expr = case expr of
-    { LetE defs body -> append defs (worker body)
+    { LetE defs body -> append (map NonRecursive defs) (worker body)
     ; RecE defs body -> let { bad = filter (\def -> not (isLambdaExpr (definedWhat def))) defs } in case bad of
-                        { Nil -> append defs (worker body)
+                        { Nil -> Cons (Recursive defs) (worker body)
                         ; _   -> let { names = map definedName bad ; text = intercalate ", " (map quoteString names) }
                                  in  (error (append "recursive definitions must be lambdas: " text)) }
-    ; VarE _ -> Nil }}
+    ; MainE -> Nil }}
 
 reorderLets :: Expr -> Expr
 reorderLets = go where
@@ -78,7 +78,8 @@ reorderLets = go where
     ; RecE  defs e  -> let { ps = partitionLets (map goDefin defs) } in letWorker ps (go e)
     ; CaseE e brs   -> CaseE (lfmap go e) (map goBranch brs)
     ; ListE es      -> ListE (map go es)
-    ; PrimE p es    -> PrimE p (map go es) }
+    ; PrimE p es    -> PrimE p (map go es) 
+    ; MainE         -> MainE }
   ; goDefin def = case def of { Defin n rhs -> Defin n (go rhs) }
   ; goBranch branch = case branch of 
       { DefaultE rhs -> DefaultE (go rhs) 

@@ -301,7 +301,7 @@ commentL' = choice [ comment1 , comment2 ] where
   }
 
 -- | We need to hide some stuff (for example @include@-s) from GHC
-nanoPragmaL :: Lexer Block
+nanoPragmaL :: Lexer LexBlock
 nanoPragmaL = 
   pbind (charTokens "{-%")                                         (\_  -> 
   pbind (many1 (locatedL lexemeL))                                 (\ln -> 
@@ -312,10 +312,10 @@ nanoPragmaL =
 emptyLineL :: Lexer Unit
 emptyLineL = pseq spaces0 eol
 
-type Block = List LToken
+type LexBlock = List LToken
 
 -- | Parser a line and all following indented lines
-blockL :: Lexer Block
+blockL :: Lexer LexBlock
 blockL = worker1 where
   { line    = alternative comment (many1 (locatedL lexemeL))
   ; comment = pseq commentL' (preturn Nil)
@@ -323,7 +323,7 @@ blockL = worker1 where
   ; worker1 = pbind line      (\ls1 -> pbind worker (\ls2 -> preturn (append ls1 ls2)))
   }
 
-blockOrCommentL :: Lexer (Maybe Block)
+blockOrCommentL :: Lexer (Maybe LexBlock)
 blockOrCommentL = choice
   [ preplace Nothing commentL
   , preplace Nothing emptyLineL
@@ -331,10 +331,10 @@ blockOrCommentL = choice
   , pfmap    Just    blockL
   ]
 
-programL :: Lexer (List Block)
+programL :: Lexer (List LexBlock)
 programL = pfmap catMaybes (manyTill eof blockOrCommentL)
 
-lexer :: FilePath -> String -> List Block
+lexer :: FilePath -> String -> List LexBlock
 lexer fname input = runParser_ fname programL (addLocations fname input)
 
 --------------------------------------------------------------------------------
@@ -342,10 +342,10 @@ lexer fname input = runParser_ fname programL (addLocations fname input)
 
 type Parse a = Parser Token a
 
-parseTopLevelBlock :: FilePath -> Block -> TopLevel
+parseTopLevelBlock :: FilePath -> LexBlock -> TopLevel
 parseTopLevelBlock fname tokens = runParser_ fname topLevelP (filterWhite tokens)
 
-filterWhite :: Block -> Block
+filterWhite :: LexBlock -> LexBlock
 filterWhite = filter cond where { cond ltok = isNotWhite (located ltok) }
 
 keywords :: List String

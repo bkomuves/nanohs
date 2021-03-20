@@ -26,6 +26,7 @@ import Parser
 import Dependency
 import Core
 import ScopeCheck
+import Inliner
 import Closure
 import CodeGen
 import Eval
@@ -40,6 +41,7 @@ import Eval
 {-% include "Dependency.hs" %-}
 {-% include "Core.hs"       %-}
 {-% include "ScopeCheck.hs" %-}
+{-% include "Inliner.hs"    %-}
 {-% include "Closure.hs"    %-}
 {-% include "CodeGen.hs"    %-}
 {-% include "Eval.hs"       %-}
@@ -70,15 +72,16 @@ runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case pr
     iosequence_ 
       [ putStrLn "compiling..."
       , let { lprogram = coreProgramToLifted coreprg
+            -- (inlineCorePrg 16 coreprg)
             ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
             } in writeLines outputFn code 
       , putStrLn "done." ]})
 
 runInterpreter :: FilePath -> IO Unit
 runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
-  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg defins main ->
+  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg blocks main ->
     ioseq (putStrLn "interpreting...") (let 
-     { toplevs  = map definedWhat defins
+     { toplevs  = map definedWhat (forgetBlockStructure blocks)
      ; startEnv = Env toplevs Nil strlits
      } in printValue (eval startEnv main)) }})
     
@@ -92,9 +95,9 @@ loadModules inputFn =
   iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> (let 
       { defins0  = catMaybes (map mbDefin toplevs)
       ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins1 -> let 
-        { defins   = reorderProgram defins1
-        ; dconTrie = collectDataCons defins
-        ; coreprg  = programToCoreProgram defins
+        { dconTrie = collectDataCons defins1
+        ; program  = reorderProgram  defins1
+        ; coreprg  = programToCoreProgram program
         } in ioreturn (PrgData strlits dconTrie coreprg) })}) 
 
 type Files  = List FilePath

@@ -111,10 +111,10 @@ recogAppsF term = case term of
   { AppF tm1 v2  -> case recogAppsF tm1 of { Pair f args -> Pair f (snoc args v2) }
   ; _            -> Pair term Nil }
 
-recogLetsT :: Term -> Pair (List Term) Term
-recogLetsT term = case term of
-  { LetT t1 t2   -> case recogLetsT t2 of { Pair ts body -> Pair (Cons t1 ts) body } 
-  ; _            -> Pair Nil term }
+-- recogLetsT :: Term -> Pair (List Term) Term
+-- recogLetsT term = case term of
+--   { LetT t1 t2   -> case recogLetsT t2 of { Pair ts body -> Pair (Cons t1 ts) body } 
+--   ; _            -> Pair Nil term }
 
 --------------------------------------------------------------------------------
 -- ** Closure converting programs
@@ -128,8 +128,9 @@ data LiftedProgram = LProgram
   deriving Show 
 
 coreProgramToLifted :: CoreProgram -> LiftedProgram
-coreProgramToLifted coreprg = case coreprg of { CorePrg defins mainTerm -> let
+coreProgramToLifted coreprg = case coreprg of { CorePrg blocks mainTerm -> let
   { nstatic = length defins  
+  ; defins  = forgetBlockStructure blocks
   ; action1 = sforM defins (\defin -> case defin of { Defin name term -> 
       sfmap (\i -> Named name (closureIndex i)) (termToStaticClosure name idSubs 0 term) })
   ; action2 = closureConvert nanoMainIs idSubs 0 mainTerm  
@@ -190,11 +191,9 @@ pruneEnvironment boundary level term = go level term where
     ; PriT _ args -> setUnions (map (goAtom level) args)
     ; LZPT _ args -> setUnions (map (go     level) args)
     ; LamT nbody  -> go (inc level) (forgetName nbody)
-    ; RecT n ts t -> let { level' = plus level n }
-                     in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
-    ; PrgT n ts t -> let { level' = level }
-                     in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
-    ; LetT t1 t2  -> setUnion (go level t1) (go (inc level) t2)
+    ; RecT n ts t -> let { level' = plus level n } in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
+    ; PrgT n ts t -> let { level' =      level   } in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
+    ; LetT nt1 t2 -> setUnion (go level (forgetName nt1)) (go (inc level) t2)
     ; CasT v brs  -> setUnion (goAtom level (located v)) (setUnions (map (goBranch level) brs)) }
   ; goBranch level branch = case branch of
     { BranchT _ n rhs -> go (plus level n) rhs
@@ -292,7 +291,7 @@ closureConvert nameprefix subs level term = go level term where
     ; CasT lv brs   -> sfmap (CasF (lfmap (goAtom level) lv)) (smapM (goBranch level) brs)
     ; RecT n nts tm -> let { level' = plus level n }
                        in  sliftA2 (RecF n) (smapM (goRec1 level') nts) (go level' tm) 
-    ; LetT tm body  -> sliftA2 LetF (termToClosure (prefixed "let") subs level tm) (go (inc level) body) } 
+    ; LetT ntm body -> case ntm of { Named name tm -> sliftA2 LetF (termToClosure (prefixed name) subs level tm) (go (inc level) body) } }
   ; goRec1 level named = case named of { Named name tm -> 
       sfmap (Named name) (termToStaticClosure (prefixed name) subs level tm) }
   ; goBranch level br  = case br of

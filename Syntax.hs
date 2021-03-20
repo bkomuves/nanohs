@@ -68,6 +68,7 @@ data Expr
   | ListE (List Expr)
   | PrimE PrimOp (List Expr)
   | StrE  Int
+  | MainE
   deriving Show
 
 data BranchE
@@ -168,7 +169,7 @@ saturatePrimApp loc primop args = case primop of { PrimOp arity prim -> case com
   where { nargs = length args }
 
 -- | Recognize primop applications, and saturate them if necessary
-recogPrimApps :: Program Expr -> Program Expr
+recogPrimApps :: List DefinE -> List DefinE
 recogPrimApps prg = map (fmapDefin recogPrimApps1) prg
 
 -- | Recognize primop applications, and saturate them if necessary
@@ -206,7 +207,7 @@ addString :: String -> Stringy Int
 addString what = sbind sget (\pair -> case pair of { Pair n list -> 
                  sbind (sput (Pair (inc n) (Cons what list))) (\_ -> sreturn n) })
 
-extractStringConstants :: Program Expr -> Pair (List String) (Program Expr)
+extractStringConstants :: List DefinE -> Pair (List String) (List DefinE)
 extractStringConstants program = case runState (smapM worker program) (Pair 0 Nil) of
   { Pair fstate prg' -> Pair (reverse (snd fstate)) prg' } 
   where { worker defin = case defin of { Defin name rhs -> sfmap (Defin name) (extractStringConstants1 rhs) } }

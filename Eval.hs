@@ -219,7 +219,7 @@ eval env term = case term of
     ; And  -> binary  ts (lazyAnd  env)
     ; Or   -> binary  ts (lazyOr   env)
     ; _    -> error "eval: unrecognized lazy primop" }}
-  ; LetT t1 t2    -> eval (pushEnv1 (eval env t1) env) t2
+  ; LetT nt1 t2   -> eval (pushEnv1 (eval env (forgetName nt1)) env) t2
   ; LamT body     -> LamV (\x -> eval (pushEnv1 x env) (forgetName body))
   ; CasT atom brs -> case evalAtom env (located atom) of
     { ConV con args -> matchCon env con args brs
