@@ -103,15 +103,16 @@ compile fname = do
   Control.Monad.mapM_ Prelude.print (_toGhcList blocks)
 
 
-  let coreprg@(CorePrg coredefs mainTerm) = programToCoreProgram blocks
+  let coreprg@(CorePrg coredefs mainIdx mainTerm) = programToCoreProgram blocks
   Prelude.putStrLn "\n----------------------------------\nCORE"
   Control.Monad.mapM_ myPrettyTermBlock (_toGhcList coredefs)
-  Prelude.print mainTerm
+  Prelude.print (mainIdx,mainTerm)
 
-  let coreprg'@(CorePrg coredefs' mainTerm') = inlineCorePrg 24 coreprg
+  -- let coreprg'@(CorePrg coredefs' mainIdx' mainTerm') = inlineCorePrg 24 coreprg
+  let coreprg'@(CorePrg coredefs' mainIdx' mainTerm') = optimizeCorePrg coreprg
   Prelude.putStrLn "\n----------------------------------\nOPTIMIZED CORE"
   Control.Monad.mapM_ myPrettyTermBlock (_toGhcList coredefs')
-  Prelude.print mainTerm
+  Prelude.print (mainIdx',mainTerm')
 
 
   let lprogram = coreProgramToLifted coreprg'

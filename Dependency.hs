@@ -36,7 +36,7 @@ data Let
   deriving Show
 
 isRecursiveDefin :: DefinE -> Bool
-isRecursiveDefin def = case def of { Defin name rhs -> trieMember name (freeVars rhs) }
+isRecursiveDefin def = case def of { Defin name rhs -> trieMember name (exprFreeVars rhs) }
 
 mkLet :: List DefinE -> Let
 mkLet list = case mbSingleton list of 
@@ -53,7 +53,7 @@ partitionLets defins = map (compose mkLet (map lkp)) sccs where
   { names = map definedName defins
   ; isName n = stringElem n names
   ; graph = trieFromList (for defins (\def -> case def of { Defin name rhs -> 
-      Pair name (filter isName (trieSetToList (freeVars rhs))) } ))
+      Pair name (filter isName (trieSetToList (exprFreeVars rhs))) } ))
   ; sccs = depenencyAnalysis (checkForDuplicates defins graph)
   ; defTrie = trieFromList (map definToPair defins)
   ; lkp n = case trieLookup n defTrie of { Just y -> Defin n y ; Nothing -> error "partitionLets: shouldn't happen" }

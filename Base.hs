@@ -175,6 +175,12 @@ snd pair = case pair of { Pair _ y -> y }
 swap :: Pair a b -> Pair b a
 swap pair = case pair of { Pair x y -> Pair y x }
 
+first :: (a1 -> a2) -> Pair a1 b -> Pair a2 b
+first f pair = case pair of { Pair x y -> Pair (f x) y }
+
+second :: (b1 -> b2) -> Pair a b1 -> Pair a b2
+second g pair = case pair of { Pair x y -> Pair x (g y) }
+
 data Triple a b c = Triple a b c deriving Show
 
 fst3 :: Triple a b c -> a

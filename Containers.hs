@@ -45,6 +45,12 @@ setDelete k = go where
   { go set = case set of { Nil -> Nil ; Cons x xs -> case compare k x of
     { LT -> set ; EQ -> xs ; GT -> Cons x (go xs) } } }
 
+setInsertMany :: List Int -> IntSet -> IntSet
+setInsertMany ks set = foldl (flip setInsert) set ks
+
+setDeleteMany :: List Int -> IntSet -> IntSet
+setDeleteMany ks set = foldl (flip setDelete) set ks
+
 setUnion :: IntSet -> IntSet -> IntSet
 setUnion set1 set2 = flipFoldr setInsert set1 set2
 

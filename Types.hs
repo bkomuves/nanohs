@@ -43,7 +43,7 @@ type Con = Int
 type Size = Int
 
 -- | Top-level index
-type Top = Int
+type TopIdx = Int
 
 -- | Static function index
 type Static = Int

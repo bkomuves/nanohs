@@ -122,8 +122,8 @@ patternHead pat = case pat of
 -- ** free and bound variables
 
 -- | Free variables in an expression
-freeVars :: Expr -> TrieSet
-freeVars expr = go trieEmpty expr where
+exprFreeVars :: Expr -> TrieSet
+exprFreeVars expr = go trieEmpty expr where
   { go bound expr = case expr of
     { VarE lname     -> let { nam = located lname } in case trieMember nam bound of { False -> trieSetSingleton nam ; _ -> trieEmpty }
     ; AppE e1 e2     -> trieUnion (go bound e1) (go bound e2)

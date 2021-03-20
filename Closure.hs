@@ -128,14 +128,14 @@ data LiftedProgram = LProgram
   deriving Show 
 
 coreProgramToLifted :: CoreProgram -> LiftedProgram
-coreProgramToLifted coreprg = case coreprg of { CorePrg blocks mainTerm -> let
+coreProgramToLifted coreprg = case coreprg of { CorePrg blocks _mainIdx mainTerm -> let
   { nstatic = length defins  
   ; defins  = forgetBlockStructure blocks
   ; action1 = sforM defins (\defin -> case defin of { Defin name term -> 
       sfmap (\i -> Named name (closureIndex i)) (termToStaticClosure name idSubs 0 term) })
   ; action2 = closureConvert nanoMainIs idSubs 0 mainTerm  
   ; action  = sliftA2 Pair action1 action2
-  ; mainidx = fromJust (findIndex (\def -> stringEq nanoMainIs (definedName def)) defins) 
+  ; mainidx = case findIndex (\def -> stringEq nanoMainIs (definedName def)) defins of { Just i -> i ; Nothing -> error "main not found" }
   } in case runState action Nil of { Pair toplist pair2 -> 
          case pair2 of { Pair idxlist mainlft -> LProgram (reverse toplist) idxlist (Pair mainidx mainlft) } } }
 

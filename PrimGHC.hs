@@ -25,6 +25,8 @@ debug x y z = Debug.Trace.trace msg z where
   msg   = Prelude.concat parts
   parts :: [Prelude.String]
   parts = [ ">>> " , _toGhcString x , " => " , Prelude.show y ]
+debug_ :: Show b => List Char -> b -> b 
+debug_ x y = debug x y y
 
 --------------------------------------------------------------------------------
 -- * Primitive types used by the primops

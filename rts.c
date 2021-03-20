@@ -4,14 +4,14 @@
 #include <stdio.h>
 #include <string.h>
 
-// #define DEBUG_GC
-// #define DEBUG_C_STACK
+#define DEBUG_GC
+#define DEBUG_C_STACK
 
 #define MAX(a,b)   (((a)>=(b))?(a):(b))
 
-#define STACK_SIZE   (1024*1024)
-#define HEAP_SIZE    (1024*1024)
-#define HEAP_EXTRA         1024
+#define STACK_SIZE   (4*1024*1024)
+#define HEAP_SIZE    (4*1024*1024)
+#define HEAP_EXTRA   (       1024)
 
 typedef uint64_t *heap_ptr;
 typedef uint64_t *stack_ptr;
@@ -193,11 +193,11 @@ void rts_perform_gc(int min_extra_space) {
 #ifdef DEBUG_GC
   printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
   printf("performing GC #%d...\n",GC_COUNTER);
-  printf("BEFORE GC\n"); rts_print_stack_and_heap();
+  // printf("BEFORE GC\n"); rts_print_stack_and_heap();
   printf("old heap size = %llu words\n",cur_heap_size);
   printf("new heap size = %llu words\n",new_heap_size);
-  printf("old heap:  %p -> %p\n",    Heap_begin,    Heap_end);
-  printf("new heap:  %p -> %p\n",New_Heap_begin,New_Heap_end);
+  // printf("old heap:  %p -> %p\n",    Heap_begin,    Heap_end);
+  // printf("new heap:  %p -> %p\n",New_Heap_begin,New_Heap_end);
 #endif
 
   // walk the stack
@@ -235,7 +235,7 @@ void rts_perform_gc(int min_extra_space) {
 
 #ifdef DEBUG_GC
   printf("compacted heap size = %llu words\n",Last_compacted_heap_size);
-  printf("AFTER GC\n"); rts_print_stack_and_heap();
+  // printf("AFTER GC\n"); rts_print_stack_and_heap();
 #endif
 
 }

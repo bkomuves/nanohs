@@ -56,29 +56,32 @@ main = runIO# nanoMain
 nanoMain :: IO Unit
 nanoMain = iobind getArgs (\args -> case args of { Nil -> printUsage ; Cons cmd args' -> handleCommand cmd args' }) where
   { handleCommand cmd args = case cmd of { Cons dash cmd1 -> ifte (cneq dash '-') printUsage (case cmd1 of { Cons c _ -> 
-      ifte (ceq c 'i') (interpret args) (ifte (ceq c 'c') (compile args) printUsage) })}
-  ; interpret args = case args of { Cons input rest -> runInterpreter input ; _ -> printUsage } 
-  ; compile   args = case args of { Cons input rest -> case rest of { Cons output _ -> runCompiler input output ; _ -> printUsage } ; _ -> printUsage }}
+      ifte (ceq c 'i') (interpret     args) (
+      ifte (ceq c 'c') (compile False args) ( 
+      ifte (ceq c 'o') (compile True  args) printUsage)) })}
+  ; interpret      args = case args of { Cons input rest -> runInterpreter input ; _ -> printUsage } 
+  ; compile   flag args = case args of { Cons input rest -> case rest of { Cons output _ -> runCompiler flag input output ; _ -> printUsage } ; _ -> printUsage }}
 
 printUsage :: IO Unit
 printUsage = iomapM_ putStrLn 
   [ "usage:"
   , "./nanohs -i <input.hs>               # interpret"
-  , "./nanohs -c <input.hs> <output.c>    # compile"   ] 
+  , "./nanohs -c <input.hs> <output.c>    # compile without optimizations"    
+  , "./nanohs -o <input.hs> <output.c>    # compile with optimizations"     ] 
 
-runCompiler :: FilePath -> FilePath -> IO Unit
-runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
+runCompiler :: Bool -> FilePath -> FilePath -> IO Unit
+runCompiler optimize inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
   PrgData strlits dconTrie coreprg -> 
     iosequence_ 
-      [ putStrLn "compiling..."
-      , let { lprogram = coreProgramToLifted (optimizeCorePrg coreprg)
+      [ putStrLn (append "compiling with optimizations " (ifte optimize "enabled" "disabled"))
+      , let { lprogram = coreProgramToLifted (ifte optimize (optimizeCorePrg coreprg) coreprg)
             ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
             } in writeLines outputFn code 
       , putStrLn "done." ]})
 
 runInterpreter :: FilePath -> IO Unit
 runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
-  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg blocks main ->
+  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg blocks _mainIdx main ->
     ioseq (putStrLn "interpreting...") (let 
      { toplevs  = map definedWhat (forgetBlockStructure blocks)
      ; startEnv = Env toplevs Nil strlits

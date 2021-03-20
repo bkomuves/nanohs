@@ -49,8 +49,9 @@ data BranchT
   | DefaultT Term
   deriving Show
  
+-- | A list of top-level terms and the main (index and term, even though it's redundant)
 data CoreProgram 
-  = CorePrg (Program Term) Term
+  = CorePrg (Program Term) TopIdx Term
   deriving Show
 
 --------------------------------------------------------------------------------
@@ -105,11 +106,13 @@ termToProgram term = go 0 term where
       { f level var = case var of { IdxV i -> g level (minus level (inc i)) ; LevV j -> g level j ; _ -> var }
       ; g level jdx = ifte (lt jdx level0) (TopV jdx) (IdxV (minus level (inc jdx)))
       }}
- 
--- termToProgram term = worker (termLevelsToIndices 0 term) where { worker term = case term of
---   { LetT   nt  body -> Cons (NonRecursive  (    namedToDefin nt )) (worker body)
---   ; RecT n nts body -> Cons (Recursive     (map namedToDefin nts)) (worker body)
---   ; MainT -> Nil }}
+
+findToplevelMain :: Term -> TopIdx
+findToplevelMain term = go 0 term where
+  { go k term = case term of 
+    { RecT n _ body -> go (plus k n) body
+    ; LetT  nt body -> ifte (stringEq (nameOf nt) "main") k (go (inc k) body)
+    ; MainT         -> error "findToplevelMain: top level `main` not found" }}
 
 --------------------------------------------------------------------------------
 

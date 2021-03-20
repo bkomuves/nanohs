@@ -45,7 +45,7 @@ exprToCore :: DataConTable -> Scope -> Expr -> Term
 exprToCore dconTable iniScope expr = scopeCheck dconTable iniScope (recogPrimApps1 expr)
 
 programToCoreProgram :: Program Expr -> CoreProgram
-programToCoreProgram blocks = CorePrg (map worker blocks) main where
+programToCoreProgram blocks = CorePrg (map worker blocks) mainIdx mainTerm where
   { duplicate n  = concat [ "multiple declaration of " , quoteString n ]
   ; defins_      = forgetBlockStructure blocks
   ; topLevScope  = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins_))
@@ -54,8 +54,9 @@ programToCoreProgram blocks = CorePrg (map worker blocks) main where
       { NonRecursive defin  -> NonRecursive (     fmapDefin (exprToCore dconTable topLevScope)  defin )
       ; Recursive    defins -> Recursive    (map (fmapDefin (exprToCore dconTable topLevScope)) defins) }
   ; no_main_err = \_ -> error (concat [ "entry point " , quoteString nanoMainIs , " not found" ]) 
-  ; main = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
-      { TopL k -> AtmT (VarA (Named nanoMainIs (TopV k))) ; _ -> no_main_err Unit } ; _ -> no_main_err Unit } } 
+  ; mainIdx = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
+      { TopL k -> k ; _ -> no_main_err Unit } ; _ -> no_main_err Unit }  
+  ; mainTerm = AtmT (VarA (Named nanoMainIs (TopV mainIdx))) }
 
 --------------------------------------------------------------------------------
 -- ** Scope checking
