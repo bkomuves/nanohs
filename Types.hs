@@ -133,20 +133,12 @@ data Var
   | StrV Int
   deriving Show
 
--- | Shift de Bruijn levels/indices in variables. Right means positive direction in levels, 
--- negative direction in indices.
-shiftVarRight :: Int -> Var -> Var
-shiftVarRight ofs var = case var of 
-   { IdxV i -> IdxV (minus i ofs) 
-   ; LevV j -> LevV (plus  j ofs)
-   ; _      -> var } 
-
 prettyVar :: Var -> String
 prettyVar var = case var of 
-  { IdxV i -> concat [ "de_Bruijn_idx(" , showInt i , ")" ] 
-  ; LevV j -> concat [ "de_Bruijn_lev(" , showInt j , ")" ] 
-  ; TopV k -> concat [ "static_fun("    , showInt k , ")" ] 
-  ; StrV m -> concat [ "static_str("    , showInt m , ")" ]}
+  { IdxV i -> concat [ "$" , showInt i ] 
+  ; LevV j -> concat [ "#" , showInt j ] 
+  ; TopV k -> concat [ "statfun(" , showInt k , ")" ] 
+  ; StrV m -> concat [ "str<"     , showInt m , ">" ]}
 
 --------------------------------------------------------------------------------
 -- ** Atoms
@@ -158,13 +150,9 @@ data Atom
   | KstA Literal
   deriving Show
 
--- | Shift de Bruijn indices in atoms
-shiftAtomRight :: Int -> Atom -> Atom
-shiftAtomRight ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVarRight ofs) namedVar) ; _ -> atom }
-
 prettyAtom :: Atom -> String
 prettyAtom atom = case atom of
-  { VarA var  -> prettyVar (forgetName var)
+  { VarA nvar -> append (nameOf nvar) (prettyVar (forgetName nvar))
   ; ConA ncon -> nameOf ncon
   ; KstA lit  -> showLiteral lit }
 

@@ -115,10 +115,10 @@ In fact, a type checker should be probably added, after all; but I wanted to kee
 \item collecting string literals
 \item partition recursive lets into strongly connected components
 \item TODO: eliminate pattern matching into simple branching on constructors
-\item TODO: inline small functions + some basic optimization
 \item recognize primops
 \item collect data constructors
 \item scope checking \& conversion to core language
+\item TODO: inline small functions + some basic optimizations
 \item closure conversion
 \item TODO: compile to an SSA intermediate language
 \item final code generation 
@@ -190,7 +190,7 @@ compiler is hard work, you don't want to do it in a limited language!
    \item recursive lets
    \end{itemize}
 \item Not having debugging support from early on (for example: good error messages, 
-      threading names \& source locations, RTS features)
+      threading names \& source locations, RTS features, pretty printing AST-s)
 \item Trying to target assembly first, instead of a simpler target like C; it's just extra cognitive load
 \item Generatic code directly, without having a low-level IL
 \item Using de Bruijn indices (as opposed to levels) in generated code
@@ -243,12 +243,7 @@ on a full-featured ``real'' compiler), but in any case, here is a TODO list:\\[1
 \item escaping in string constants
 \item compile to a low-level intermediate language first, and do codegen from that
 \item add a type system
-\item more backends:
-  \begin{itemize}
-  \item x86-64 assembly
-  \item x86-64 machine code (say, ELF object files)
-  \item some simple virtual machine?
-  \end{itemize}
+\item more backends: x86-64 assembly and/or machine code; some simple VM
 \end{itemize}
 
 \end{frame}

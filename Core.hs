@@ -40,7 +40,6 @@ data Term
   | LZPT PrimOp (List Term)
   | LetT (Named Term) Term
   | RecT Int (List (Named Term)) Term
-  | PrgT Int (List (Named Term)) Term
   | CasT LAtom (List BranchT)
   | MainT
   deriving Show
@@ -54,43 +53,72 @@ data CoreProgram
   = CorePrg (Program Term) Term
   deriving Show
 
--- transformAtom :: (Level -> Atom -> Atom) -> Level -> Term -> Term
--- transformAtom f = go where 
---   { go level term = case term of
---     { AtmT a        -> AtmT (f level a)
---     ; LamT nt       -> LamT (nfmap (go (inc level)) nt)
---     ; AppT t a      -> AppT (go level t) (f level a)
---     ; PriT p as     -> PriT p (map (f  level) as)
---     ; LZPT p ts     -> LZPT p (map (go level) ts)
---     ; LetT t1 t2    -> LetT (go level t1) (go (inc level) t2)
---     ; RecT n nts t  -> let { level' = plus level n } in RecT n (map (nfmap (go level')) nts) (go level' t)
---     ; CasT la brs   -> CasT (lfmap (f level) la) (map (goBranch level) brs) }
---   ; goBranch level branch = case branch of  
---     { BranchT c n t -> BranchT c n (go (plus level n) t)
---     ; DefaultT    t -> DefaultT    (go       level t   ) } }
+--------------------------------------------------------------------------------
+
+showAtom :: Atom -> String
+showAtom a = prettyAtom a
+
+showTerm :: Term -> String
+showTerm term = case term of
+  { AtmT atom       -> showAtom atom
+  ; LamT nbody      -> case nbody of { Named name body -> concat [ "(" , singleton backslashC , name , " -> " , showTerm body , ")" ] }
+  ; AppT t a        -> concat [ "(" , showTerm t , " " , showAtom a , ")" ]
+  ; PriT pop args   -> case pop of { PrimOp _ p -> concat [ showPrim p , "(" , intercalate "," (map showAtom args) , ")" ]} 
+  ; LZPT pop args   -> case pop of { PrimOp _ p -> concat [ showPrim p , "(" , intercalate "," (map showTerm args) , ")" ]}
+  ; LetT nt  body   -> concat [ "[let " , showNamedTerm nt , " in " , showTerm body , "]" ]
+  ; RecT _ nts body -> concat [ "letrec { " , intercalate " ; " (map showNamedTerm nts) , " } in " , showTerm body ]
+  ; CasT la brs     -> concat [ "case " , showAtom (located la) , " of { " ,intercalate " ; " (map showBranchT brs) , " }" ]
+  ; MainT           -> "<main>" }
+
+showNamedTerm :: Named Term -> String
+showNamedTerm nterm = case nterm of { Named n t -> append3 n " = " (showTerm t) }
+
+showBranchT :: BranchT -> String
+showBranchT branch = case branch of
+  { BranchT ncon n rhs -> concat [ nameOf ncon , " " , intercalate " " (map (\i -> appendInt "a" i) (rangeFrom 1 n)) , " -> " , showTerm rhs ]
+  ; DefaultT rhs -> append "_ -> " (showTerm rhs) }
 
 --------------------------------------------------------------------------------
 
 programToTerm :: Program Term -> Term
-programToTerm blocks = go blocks where
-  { go blocks = case blocks of { Nil -> MainT ; Cons this rest -> case this of 
-      { NonRecursive defin  -> LetT                     (definToNamed defin)  (go rest)
-      ; Recursive    defins -> RecT (length defins) (map definToNamed defins) (go rest) }}}
+programToTerm blocks = go 0 blocks where
+  { go k blocks = case blocks of { Nil -> MainT ; Cons this rest -> case this of 
+      { Recursive    defins -> let { n = length defins ; k' = plus k n} in
+                               RecT n (map (worker k') defins) (go      k' rest)
+      ; NonRecursive defin  -> LetT   (     worker k   defin ) (go (inc k) rest) }}
+  ; worker level0 defin = case defin of { Defin name term -> Named name (transformVars f level0 term) } where
+     { f _level var = case var of { IdxV i -> IdxV i 
+                                  ; LevV j -> LevV (plus level0 j) 
+                                  ; TopV k -> LevV k 
+                                  ; _      -> var }}}
 
+-- | it's important to eliminate levels because they can point to top-level definitions...?
+-- TODO: to be really correct, we should recognize top-level definitions...
 termToProgram :: Term -> Program Term
-termToProgram term = worker term where { worker term = case term of
-  { LetT   nt  body -> Cons (NonRecursive  (    namedToDefin nt )) (worker body)
-  ; RecT n nts body -> Cons (Recursive     (map namedToDefin nts)) (worker body)
-  ; MainT -> Nil }}
+termToProgram term = go 0 term where  
+  { go k term = case term of
+      { RecT n nts body -> let { k' = plus k n } in  
+                           Cons (Recursive     (map (worker k') nts)) (go      k' body)
+      ; LetT   nt  body -> Cons (NonRecursive  (     worker k   nt )) (go (inc k) body)
+      ; MainT -> Nil }
+  ; worker level0 named = case named of { Named name term -> Defin name (transformVars f level0 term) } where
+      { f level var = case var of { IdxV i -> g level (minus level (inc i)) ; LevV j -> g level j ; _ -> var }
+      ; g level jdx = ifte (lt jdx level0) (TopV jdx) (IdxV (minus level (inc jdx)))
+      }}
+ 
+-- termToProgram term = worker (termLevelsToIndices 0 term) where { worker term = case term of
+--   { LetT   nt  body -> Cons (NonRecursive  (    namedToDefin nt )) (worker body)
+--   ; RecT n nts body -> Cons (Recursive     (map namedToDefin nts)) (worker body)
+--   ; MainT -> Nil }}
 
 --------------------------------------------------------------------------------
 
-transformVar :: (Level -> Var -> Var) -> Level -> Term -> Term
-transformVar f = transformAtom g where { g level atom = case atom of
+transformVars :: (Level -> Var -> Var) -> Level -> Term -> Term
+transformVars f = transformAtoms g where { g level atom = case atom of
   { VarA nvar -> case nvar of { Named name var -> VarA (Named name (f level var)) } ; _ -> atom } }
 
-transformAtom :: (Level -> Atom -> Atom) -> Level -> Term -> Term
-transformAtom f = transformTerm worker where
+transformAtoms :: (Level -> Atom -> Atom) -> Level -> Term -> Term
+transformAtoms f = transformTerm worker where
   { worker level term = case term of
     { AtmT a        -> AtmT (f level a)
     ; AppT t a      -> AppT t (f level a)
@@ -108,19 +136,55 @@ transformTerm f level term = go level term where
     ; LZPT p ts     -> f level (LZPT p (map (go level) ts))
     ; LetT nt1 t2   -> f level (LetT (nfmap (go level) nt1) (go (inc level) t2))
     ; RecT n nts t  -> f level (let { level' = plus level n } in RecT n (map (nfmap (go level')) nts) (go level' t))
-    ; CasT la brs   -> f level (CasT la (map (goBranch level) brs)) }
+    ; CasT la brs   -> f level (CasT la (map (goBranch level) brs)) 
+    ; MainT         -> f level MainT }
   ; goBranch level branch = case branch of  
     { BranchT c n t -> BranchT c n (go (plus level n) t)
-    ; DefaultT    t -> DefaultT    (go       level t   ) } }
+    ; DefaultT    t -> DefaultT    (go       level    t) } }
 
 --------------------------------------------------------------------------------
 
-shiftTermRight :: Int -> Term -> Term
-shiftTermRight m term = transformVar (\_ var -> shiftVarRight m var) 0 term
+-- | Shift de Bruijn indices in variables. We /add/ the offset to the indices,
+-- leaving levels unchanged.
+shiftVarRight :: Int -> Var -> Var
+shiftVarRight ofs var = case var of 
+   { IdxV i -> IdxV (plus i ofs) 
+   ; LevV j -> LevV j
+   ; _      -> var } 
 
-deBruijnIndicesToLevels :: Term -> Term
-deBruijnIndicesToLevels term = transformVar worker 0 term where
-  { worker level var = case var of { IdxV idx -> LevV (minus level (inc idx)) ; _ -> var } }
+-- | Shift de Bruijn indices in atoms
+shiftAtomRight :: Int -> Atom -> Atom
+shiftAtomRight ofs atom = case atom of  { VarA namedVar -> VarA (nfmap (shiftVarRight ofs) namedVar) ; _ -> atom }
+
+-- | The condition should returin @True@ \"outside the term\"
+shiftVarConditional :: (Level -> Bool) -> Int -> Level -> Var -> Var
+shiftVarConditional cond ofs level var = case var of 
+   { IdxV i -> let { j = minus level (inc i) } in 
+               ifte (cond j)     (IdxV (plus i ofs)) var
+   ; LevV j -> ifte (cond j) var (LevV (plus j ofs)) 
+   ; _      -> var } 
+
+shiftTerm :: Level -> Level -> Term -> Term
+shiftTerm oldlevel newlevel term = let { shift = minus newlevel oldlevel } in 
+  transformVars (\level var -> shiftVarConditional (\j -> lt j oldlevel) shift level var) oldlevel term
+
+--------------------------------------------------------------------------------
+
+atomIndexToLevel :: Level -> Atom -> Atom
+atomIndexToLevel level atom = case atom of { VarA nvar -> case nvar of { Named name var -> case var of
+  { IdxV i -> VarA (Named name (LevV (minus level (inc i)))) ; _ -> atom }} ; _ -> atom }
+
+atomLevelToIndex :: Level -> Atom -> Atom
+atomLevelToIndex level atom = case atom of { VarA nvar -> case nvar of { Named name var -> case var of
+  { LevV j -> VarA (Named name (IdxV (minus level (inc j)))) ; _ -> atom }} ; _ -> atom }
+
+termIndicesToLevels :: Level -> Term -> Term
+termIndicesToLevels level term = transformAtoms atomIndexToLevel level term 
+
+termLevelsToIndices :: Level -> Term -> Term
+termLevelsToIndices level term = transformAtoms atomLevelToIndex level term 
+
+--------------------------------------------------------------------------------
 
 termSize :: Term -> Size
 termSize term = go term where 

@@ -124,7 +124,7 @@ scopeCheck dcontable = go 0 where
       { theVars = zipWithIndex (\i j -> VarA (Named (appendInt "parg" j) (IdxV i))) (reverse (range ofs)) 
       ; nameIt var x = case var of { VarA named -> case named of { Named n _ -> Named n x }} 
       ; worker eis vars atoms = case eis of { Nil -> PriT prim (reverse atoms) ; Cons ei eis' -> case ei of
-          { Right atom -> worker eis' vars (Cons (shiftAtomRight (negate ofs) atom) atoms) 
+          { Right atom -> worker eis' vars (Cons (shiftAtomRight ofs atom) atoms) 
           ; Left  term -> case vars of { Cons var vars' -> LetT (nameIt var term) (worker eis' vars' (Cons var atoms)) }}}
       } in worker theEis theVars Nil
   -- ; goPrim :: PrimOp -> Int -> Level -> Scope -> List (Either Term Atom) -> List Expr -> Term 

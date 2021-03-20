@@ -8,7 +8,7 @@ module Main where
 
 --------------------------------------------------------------------------------
 
-import Prelude ( Int , Char , Eq , Show(..) , (++) , (.) , ($) )
+import Prelude ( Int , Char , Eq , Show(..) , (++) , (.) , ($)  )
 import qualified Prelude
 
 import qualified Control.Monad
@@ -33,7 +33,18 @@ import Inliner
 import Closure
 import CodeGen
 
+import qualified Text.Show.Pretty as Pretty
+
 --------------------------------------------------------------------------------
+
+myPrettyTermDefin :: Prelude.String -> Defin Term -> Prelude.IO ()
+myPrettyTermDefin prefix (Defin n t) = Prelude.putStrLn (Prelude.concat list) where
+  list = [ prefix , _toGhcString n , " := " , _toGhcString (showTerm t) ] :: [Prelude.String]
+
+myPrettyTermBlock :: Block Term -> Prelude.IO ()
+myPrettyTermBlock (NonRecursive def) =                      myPrettyTermDefin "- "   def
+myPrettyTermBlock (Recursive defs  ) = Control.Monad.mapM_ (myPrettyTermDefin "> ") (_toGhcList defs)
+
 
 main = do
   Prelude.putStrLn "*** main.hs"
@@ -94,12 +105,12 @@ compile fname = do
 
   let coreprg@(CorePrg coredefs mainTerm) = programToCoreProgram blocks
   Prelude.putStrLn "\n----------------------------------\nCORE"
-  Control.Monad.mapM_ Prelude.print (_toGhcList coredefs)
+  Control.Monad.mapM_ myPrettyTermBlock (_toGhcList coredefs)
   Prelude.print mainTerm
 
-  let coreprg'@(CorePrg coredefs' mainTerm') = coreprg -- inlineCorePrg 16 coreprg
+  let coreprg'@(CorePrg coredefs' mainTerm') = inlineCorePrg 24 coreprg
   Prelude.putStrLn "\n----------------------------------\nOPTIMIZED CORE"
-  Control.Monad.mapM_ Prelude.print (_toGhcList coredefs')
+  Control.Monad.mapM_ myPrettyTermBlock (_toGhcList coredefs')
   Prelude.print mainTerm
 
 

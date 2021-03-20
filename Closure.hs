@@ -192,7 +192,6 @@ pruneEnvironment boundary level term = go level term where
     ; LZPT _ args -> setUnions (map (go     level) args)
     ; LamT nbody  -> go (inc level) (forgetName nbody)
     ; RecT n ts t -> let { level' = plus level n } in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
-    ; PrgT n ts t -> let { level' =      level   } in  setUnions (Cons (go level' t) (map (\t -> go level' (forgetName t)) ts))
     ; LetT nt1 t2 -> setUnion (go level (forgetName nt1)) (go (inc level) t2)
     ; CasT v brs  -> setUnion (goAtom level (located v)) (setUnions (map (goBranch level) brs)) }
   ; goBranch level branch = case branch of

@@ -71,8 +71,7 @@ runCompiler inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case pr
   PrgData strlits dconTrie coreprg -> 
     iosequence_ 
       [ putStrLn "compiling..."
-      , let { lprogram = coreProgramToLifted coreprg
-            -- (inlineCorePrg 16 coreprg)
+      , let { lprogram = coreProgramToLifted (optimizeCorePrg coreprg)
             ; code     = runCodeGenM_ (liftedProgramToCode inputFn strlits dconTrie lprogram)
             } in writeLines outputFn code 
       , putStrLn "done." ]})
