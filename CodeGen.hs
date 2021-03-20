@@ -477,7 +477,7 @@ applyClosure nfo closure args = case closure of { ClosureF cbody env fun_arity -
     ; LT -> case cbody of
         { InlineBody _      -> error "applyClosure: underapplication of inlined closure (?!?)"
         ; StaticBody static -> withFreshVar "obj" (\obj -> sseq (ssequence_
-              [ addWords [ "heap_ptr ", obj , " = rts_allocate_closure( " , showInt static , " , " , showInt ntotal , " , " , showInt (minus fun_arity nargs) , " );" ]
+              [ addWords [ "heap_ptr ", obj , " = rts_allocate_closure( " , showInt static , " , " , showInt (plus envsize nargs) , " , " , showInt (minus fun_arity nargs) , " );" ]
               , copyEnvironmentTo' nfo obj  1          args
               , copyEnvironmentTo  nfo obj (inc nargs) env 
               ]) (sreturn obj)) } } }
