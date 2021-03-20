@@ -43,6 +43,10 @@ mkLet list = case mbSingleton list of
   { Nothing  -> LetRec list
   ; Just def -> ifte (isRecursiveDefin def) (LetRec (singleton def)) (Let1 def) }
 
+checkForDuplicates :: List DefinE -> a -> a
+checkForDuplicates defins what = case trieFromListUnique duplicate (map definToPair defins) of 
+  { Node _ _ -> what } where { duplicate n  = concat [ "multiple declaration of " , quoteString n ] }
+
 -- debug "graph" (trieToList graph) (debug "SCC" sccs (
 partitionLets :: List DefinE -> List Let
 partitionLets defins = map (compose mkLet (map lkp)) sccs where
@@ -50,7 +54,7 @@ partitionLets defins = map (compose mkLet (map lkp)) sccs where
   ; isName n = stringElem n names
   ; graph = trieFromList (for defins (\def -> case def of { Defin name rhs -> 
       Pair name (filter isName (trieSetToList (freeVars rhs))) } ))
-  ; sccs = depenencyAnalysis graph
+  ; sccs = depenencyAnalysis (checkForDuplicates defins graph)
   ; defTrie = trieFromList (map definToPair defins)
   ; lkp n = case trieLookup n defTrie of { Just y -> Defin n y ; Nothing -> error "partitionLets: shouldn't happen" }
   }
