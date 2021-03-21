@@ -124,3 +124,27 @@ temporary).
 
 The garbage collector is a very simple copying (compacting) GC.
 
+
+Organization of source code
+---------------------------
+
+    Base.hs          - base library / prelude
+    Closure.hs       - closure conversion
+    CodeGen.hs       - code generation
+    Containers.hs    - container data structures 
+    Core.hs          - core language
+    DataCon.hs       - data constructors
+    Dependency.hs    - reordering lets using the dependency graph
+    Eval.hs          - interpreter
+    Inliner.hs       - inliner + basic optimizations
+    Nano.hs          - main executable
+    Parser.hs        - parser
+    PrimGHC.hs       - the primops implemented in Haskell (so that GHC can host it) 
+    PrimOps.hs       - primops
+    ScopeCheck.hs    - scope checking + conversion to core
+    Syntax.hs        - surface syntax
+    Types.hs         - common types
+    rts.c            - the runtime system implemented in C
+    bootstrap.sh     - shell script to bootstrap the compiler
+    sloc_count.sh    - shell script to measure source code size
+ 
