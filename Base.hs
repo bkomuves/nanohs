@@ -130,7 +130,7 @@ and3 :: Bool -> Bool -> Bool -> Bool
 and3 x y z = and (and x y) z
 
 andList :: List Bool -> Bool
-andList list = case list of { Nil -> False ; Cons b bs -> ifte b (andList bs) False }
+andList list = case list of { Nil -> True ; Cons b bs -> ifte b (andList bs) False }
 
 --------------------------------------------------------------------------------
 -- ** Maybe
