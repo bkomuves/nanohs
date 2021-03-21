@@ -22,7 +22,7 @@ Current status
 * it needs a large C stack (16-32 Mb) + GCC optims (because of the lack of tail call elimination)
 * source code: about 1900 "essential" lines + 520 lines of type annotations; C runtime: \~650 lines
   (including some debugging features)
-* the interpreter does not work at the moments
+* the interpreter does not work at the moment
 
 
 Usage
@@ -32,8 +32,14 @@ Usage
     $ nanhos -o input.hs output.c            # compile with optimizations enabled
     $ nanhos -i input.hs [arg1 [arg2 ...]]   # interpret (does not work at the moment)
 
+Or you can just use `runghc`:
 
-Haskell imports are ignored, but you can use C-style includes with the pragma
+    $ runghc Nano.hs -c examples/church.nano tmp.c ; gcc tmp.c ; ./a.out
+
+
+### Imports
+
+Haskell imports are ignored, but you can use C-style includes with the pragma:
 
     {-% include "othermodule.hs" %-}
 
@@ -88,7 +94,7 @@ Compilation pipeline
 8. inline small functions + beta reduce + eliminate unused lets
 9. closure conversion
 10. TODO: compile to some low-level intermediate language
-11. final code generation (different backends)
+11. final code generation (TODO: different backends)
 
 
 Runtime system

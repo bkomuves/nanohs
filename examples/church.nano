@@ -14,13 +14,6 @@ action = iosequence_
   , print (natToInt (pow ten (intToNat 4)))
   ]
 
--- action = putStrLn (g3 15 16 17) where
---   { f a b c d e f g = intercalate "," (map (compose3 id showInt id) (id id [a,b,c,d,e,f,g]))
---   ; g4 = (id id f) 11 12 13  
---   ; g3 = (id id g4) 14 
---   }
-
--- type X   = Int
 data Nat = Nat (forall a. a -> (a -> a) -> a)
 
 elim :: Nat -> a -> (a -> a) -> a

@@ -1,0 +1,34 @@
+
+{-% include "Base.hs" %-}
+
+main = runIO (ioseq action6 (ioseq sep (ioseq action7 action_debug)))
+
+action_debug = iosequence_
+  [ sep
+  , putStrLn "some construcor names:" 
+  , print (Triple 101 202 303)
+  , print (SomeConstructor "hello" 666)
+  ]
+
+big_action = putStrLn (showInt (length (big2 10 10 100)))
+
+big0     n = concat (replicate n "0123456789" )
+big1 m   n = concat (replicate m (big0 n)  )
+big2 k m n = concat (replicate k (big1 m n))
+
+sep = putStrLn (replicate 20 '=')
+
+action7 = iobind (readFile "a.txt") (\text -> ioseq
+  (putStrLn "contents of the file `a.txt`:") (putStrLn (unlines (map ff (lines text)))))
+
+myPrintJust mb = case mb of { Just n -> putStrLn (append "fuck -> " (showInt n)) }
+
+text  = unlines [ "alma" , "korte" , "szilva" ]
+text2 = unlines (map ff (lines text))
+ff x  = append ">>> " x
+
+action6 = iobind getArgs (\list -> iosequence_
+  [ putStrLn (append "argc = " (showInt (length list)))
+  , iomapM_ putStrLn list
+  ])
+
