@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SRC="Base.hs Closure.hs CodeGen.hs Containers.hs Core.hs DataCon.hs Dependency.hs Eval.hs Nano.hs Parser.hs PrimOps.hs ScopeCheck.hs Syntax.hs Types.hs"
+SRC="Base.hs Closure.hs CodeGen.hs Containers.hs Core.hs DataCon.hs Dependency.hs Eval.hs Inliner.hs Nano.hs Parser.hs PrimOps.hs ScopeCheck.hs Syntax.hs Types.hs"
 
 FULL=`cat                $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'` 
 ANNT=`grep "::"          $SRC | wc -l | sed -E 's/[ ]*([1-9]+)/\1/g'`

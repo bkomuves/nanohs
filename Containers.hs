@@ -51,6 +51,12 @@ setInsertMany ks set = foldl (flip setInsert) set ks
 setDeleteMany :: List Int -> IntSet -> IntSet
 setDeleteMany ks set = foldl (flip setDelete) set ks
 
+setIntersect :: IntSet -> IntSet -> IntSet
+setIntersect set1 set2 = filter (\x -> setMember x set2) set1
+
+setIsDisjoint :: IntSet -> IntSet -> Bool
+setIsDisjoint set1 set2 = andList (map (\x -> not (setMember x set2)) set1)
+
 setUnion :: IntSet -> IntSet -> IntSet
 setUnion set1 set2 = flipFoldr setInsert set1 set2
 

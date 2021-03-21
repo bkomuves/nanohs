@@ -118,7 +118,7 @@ In fact, a type checker should be probably added, after all; but I wanted to kee
 \item recognize primops
 \item collect data constructors
 \item scope checking \& conversion to core language
-\item TODO: inline small functions + some basic optimizations
+\item inline small functions + some basic optimizations
 \item closure conversion
 \item TODO: compile to an SSA intermediate language
 \item final code generation 
@@ -165,9 +165,9 @@ Current state:
 
 Code size:
 \begin{itemize}
-\item the compiler: $\sim 1700$ lines (required code)
-\item type annotations: $+500$ lines (ignored)
-\item the C runtime: $\sim 600$ lines (includes some debug features)
+\item the compiler: $\sim 1900$ lines (required code)
+\item type annotations: $+525$ lines (ignored)
+\item the C runtime: $\sim 600$ lines (including some debug features)
 \end{itemize}
 
 \end{frame}
@@ -193,7 +193,7 @@ compiler is hard work, you don't want to do it in a limited language!
       threading names \& source locations, RTS features, pretty printing AST-s)
 \item Trying to target assembly first, instead of a simpler target like C; it's just extra cognitive load
 \item Generatic code directly, without having a low-level IL
-\item Using de Bruijn indices (as opposed to levels) in generated code
+\item Using de Bruijn indices (as opposed to levels) in the generated code
 \end{itemize}
 }
 

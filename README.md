@@ -16,10 +16,10 @@ are parsed, but then ignored.
 Current status
 --------------
 
-* it compiles via GHC, both with and without optimization
-* it self-hosts with NanoHs optimizations disabled, but not with enabled (possible cause: the inlining phase)
-* it needs a large C stack (16-32 Mb)
-
+* it compiles via GHC, both with and without optimizations
+* it self-hosts, both with and without optimizations
+* it needs a large C stack (16-32 Mb) + GCC optims (because of the lack of tail call elims)
+* source code: about 1900 "essential" lines + 520 lines of type annotations; C runtime: ~600 lines
 
 The surface language
 --------------------

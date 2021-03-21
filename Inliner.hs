@@ -1,5 +1,5 @@
 
--- | Inlining small functions
+-- | Inlining small functions + some basic optimizations
 
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
@@ -134,12 +134,13 @@ removeUnusedLets mainIdx term = snd (go 0 term) where
                           case go (inc level) t2 of { Pair free2 t2' -> ifte (setMember level free2)
                             (Pair (setUnion free1 (setDelete level free2)) (LetT (Named name t1') t2'))
                             (Pair free2 (shiftTerm (inc level) level t2')) }}}
-      ; RecT n nts tm  -> let { level' = plus level n ;
-                                pairs = map (\nt -> case nt of { Named named t -> case go level' t of 
+      ; RecT n nts tm  -> let { level' = plus level n ; levels = rangeFrom level n 
+                              ; pairs  = map (\nt -> case nt of { Named named t -> case go level' t of 
                                   { Pair set t' -> Pair set (Named named t') }}) nts } 
-                          in  case go level' tm of { Pair set tm' ->
-                                Pair (setUnion set (setDeleteMany (rangeFrom level n) (setUnions (map fst pairs)))) 
-                                     (RecT n (map snd pairs) tm') }
+                          in  case go level' tm of { Pair free2 tm' -> ifte (setIsDisjoint levels free2)
+                                (Pair free2 (shiftTerm level' level tm'))                                
+                                   (Pair (setUnion free2 (setDeleteMany levels (setUnions (map fst pairs)))) 
+                                      (RecT n (map snd pairs) tm')) }
       ; CasT la brs    -> case la of { Located loc a -> case goAtom level a of { Pair set1 a' -> 
                           let { pairs = map (goBranch level) brs } 
                           in  Pair (setUnion set1 (setUnions (map fst pairs))) (CasT (Located loc a') (map snd pairs)) }} 
