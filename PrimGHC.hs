@@ -48,15 +48,19 @@ data Pair a b = Pair a b deriving Show
 --------------------------------------------------------------------------------
 -- * IO support
 
-data RealWorld = RealWorld
+type IO a = IO.IO a
 
-type IO a = RealWorld -> Pair RealWorld a
+ioreturn :: a -> IO a
+ioreturn = Prelude.return
 
-{-# NOINLINE runIO# #-}
-runIO# :: IO a -> IO.IO a
-runIO# f = do
+iobind :: IO a -> (a -> IO b) -> IO b
+iobind = (Prelude.>>=)
+
+{-# NOINLINE runIO #-}
+runIO :: IO a -> IO.IO a
+runIO action = do
   Prelude.putStrLn "[rts version = GHC]"
-  case f RealWorld of { Pair _ y -> Prelude.return y }
+  action
 
 --------------------------------------------------------------------------------
 -- * Built-ins \/ primops
@@ -133,35 +137,32 @@ le x y = _fromGhcBool ((Prelude.<=) x y)
 error :: String -> a
 error msg = Prelude.error (_toGhcString msg)
 
-{-# NOINLINE print# #-}
-print# :: Show a => a -> Unit
-print# what = Unsafe.unsafePerformIO ((Prelude.>>) (Prelude.print what) (Prelude.return Unit))
+print :: Show a => a -> IO Unit
+print what = (Prelude.>>) (Prelude.print what) (Prelude.return Unit)
 
 --------------------------------------------------------------------------------
--- * ML-style IO (we use the hash to distinguish from the IO monad)
+-- * IO monad
 
-{-# NOINLINE getChar# #-}
-getChar# :: Unit -> Maybe Char
-getChar# _ = Unsafe.unsafePerformIO (Exc.catch just handler) where
+getChar :: IO (Maybe Char)
+getChar = Exc.catch just handler where
   just :: IO.IO (Maybe Char)
   just =  (Prelude.>>=) Prelude.getChar (\c -> Prelude.return (Just c))
   handler :: Exc.IOException -> IO.IO (Maybe Char)
   handler _ = Prelude.return Nothing
 
-{-# NOINLINE putChar# #-}
-putChar# :: Char -> Unit
-putChar# c = Unsafe.unsafePerformIO ( (Prelude.>>) (Prelude.putChar c) (Prelude.return Unit) )
+putChar :: Char -> IO Unit
+putChar c = (Prelude.>>) (Prelude.putChar c) (Prelude.return Unit)
 
-{-# NOINLINE exit# #-}
-exit# :: Int -> Unit
-exit# 0 = Unsafe.unsafePerformIO (Exit.exitWith  Exit.ExitSuccess   )
-exit# k = Unsafe.unsafePerformIO (Exit.exitWith (Exit.ExitFailure k))
+exit :: Int -> IO Unit
+exit 0 = Exit.exitWith  Exit.ExitSuccess   
+exit k = Exit.exitWith (Exit.ExitFailure k)
 
-{-# NOINLINE getArg# #-}
-getArg# :: Int -> Maybe String
-getArg# m = index m (Unsafe.unsafePerformIO Env.getArgs) where
+getArg :: Int -> IO (Maybe String)
+getArg m = Prelude.fmap (index m) (Env.getArgs) where
   index _ [] = Nothing
-  index k (this:rest) = case k of { 0 -> Just (_fromGhcString this) ; _ -> index ((Prelude.-) k 1) rest } 
+  index k (this:rest) = case k of 
+    0 -> Just (_fromGhcString this) 
+    _ -> index ((Prelude.-) k 1) rest 
 
 ----------------------------------------
 
@@ -188,29 +189,24 @@ _toGhcIOMode mode = case mode of
   AppendMode    -> IO.AppendMode    
   ReadWriteMode -> IO.ReadWriteMode 
 
-{-# NOINLINE openFile# #-}
-openFile# :: String -> IOMode -> Handle
-openFile# fn mode = Unsafe.unsafePerformIO (IO.openFile (_toGhcString fn) (_toGhcIOMode mode))
+openFile :: String -> IOMode -> IO Handle
+openFile fn mode = IO.openFile (_toGhcString fn) (_toGhcIOMode mode)
 
-{-# NOINLINE hClose# #-}
-hClose# :: Handle -> Unit
-hClose# h = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hClose h) (Prelude.return Unit) ) 
+hClose :: Handle -> IO Unit
+hClose h = (Prelude.>>) (IO.hClose h) (Prelude.return Unit) 
 
-{-# NOINLINE hGetChar# #-}
-hGetChar# :: Handle -> Maybe Char
-hGetChar# h = Unsafe.unsafePerformIO (Exc.catch just handler) where
+hGetChar :: Handle -> IO (Maybe Char)
+hGetChar h = Exc.catch just handler where
   just :: IO.IO (Maybe Char)
   just =  (Prelude.>>=) (IO.hGetChar h) (\c -> Prelude.return (Just c))
   handler :: Exc.IOException -> IO.IO (Maybe Char)
   handler _ = Prelude.return Nothing
 
-{-# NOINLINE hPutChar# #-}
-hPutChar# :: Handle -> Char -> Unit
-hPutChar# h c = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutChar h c) (Prelude.return Unit) )
+hPutChar :: Handle -> Char -> IO Unit
+hPutChar h c = (Prelude.>>) (IO.hPutChar h c) (Prelude.return Unit) 
 
-{-# NOINLINE hPutStr# #-}
-hPutStr# :: Handle -> String -> Unit
-hPutStr# h s = Unsafe.unsafePerformIO ( (Prelude.>>) (IO.hPutStr h (_toGhcString s)) (Prelude.return Unit) )
+hPutStr :: Handle -> String -> IO Unit
+hPutStr h s = (Prelude.>>) (IO.hPutStr h (_toGhcString s)) (Prelude.return Unit) 
 
 --------------------------------------------------------------------------------
 -- * Marshalling to\/from standard Haskell types

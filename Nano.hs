@@ -50,7 +50,7 @@ import Eval
 -- * Compiler entry point 
 
 -- | GHC \/ nanohs shared entry point
-main = runIO# nanoMain 
+main = runIO nanoMain 
 
 -- | Nano entry point
 nanoMain :: IO Unit
@@ -114,7 +114,7 @@ loadAndParseMany sofar fnames = case fnames of { Nil -> ioreturn (Pair sofar Nil
 loadAndParse1 :: Files -> FilePath -> IO Loaded
 loadAndParse1 sofar fname = case stringMember fname sofar of
   { True  -> ioreturn (Pair sofar Nil)
-  ; False -> iobind (readFile fname) (\text -> ioseq (putStrLn (append "+ " fname)) (let 
+  ; False -> ioseq (putStrLn (append "+ " fname)) (iobind (readFile fname) (\text -> let 
       { blocks   = lexer fname text
       ; toplevs  = map (parseTopLevelBlock fname) blocks
       ; includes = filterIncludes toplevs

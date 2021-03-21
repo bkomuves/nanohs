@@ -85,20 +85,23 @@ stack_ptr static_stack;
 #define CON_Nothing   5
 #define CON_Just      6
 #define CON_Pair            7
-#define CON_RealWorld       8
+#define CON_ActionToken     8
 #define CON_ReadMode        9
 #define CON_WriteMode      10
 #define CON_AppendMode     11
 #define CON_ReadWriteMode  12
 
-#define FALSE    NULLARY_CON( CON_False   )
-#define TRUE     NULLARY_CON( CON_True    )
-#define UNIT     NULLARY_CON( CON_Unit    )
-#define NIL      NULLARY_CON( CON_Nil     )
-#define NOTHING  NULLARY_CON( CON_Nothing )
+#define FALSE         NULLARY_CON( CON_False       )
+#define TRUE          NULLARY_CON( CON_True        )
+#define UNIT          NULLARY_CON( CON_Unit        )
+#define NIL           NULLARY_CON( CON_Nil         )
+#define NOTHING       NULLARY_CON( CON_Nothing     )
+#define ACTIONTOKEN   NULLARY_CON( CON_ActionToken )
 
 #define false 0
 #define true  1
+
+#define CHECK_ACTION_TOKEN(token) if (((uint64_t)token)!=((uint64_t)ACTIONTOKEN)) { rts_internal_error("IO: expecting an action token"); }
 
 // -----------------------------------------------------------------------------
 // error handling
@@ -740,25 +743,41 @@ heap_ptr prim_IntLE  (heap_ptr arg1, heap_ptr arg2) { return FROM_BOOL( TO_INT(a
 // -----------------------------------------------------------------------------
 
 // runIO :: IO a -> a
-// type IO a = RealWorld -> Pair RealWorld a
+// type IO a = ActionToken -> a
 heap_ptr prim_RunIO(heap_ptr funobj) {
-  // recall that "type IO a = (Unit -> a)"
   stack_ptr loc = rts_stack_allocate(1);
-  loc[0] = (uint64_t) NULLARY_CON( CON_RealWorld );
-  heap_ptr pair = rts_apply( funobj , 1 );
-  if( IS_HEAP_PTR(pair) && (pair[0] == TAGWORD_DATACON(CON_Pair,2)) ) {
-    return (heap_ptr) pair[2];
-  }
-  else {
-    rts_internal_error("runIO: return is not a (RealWorld,y) pair");
-    return UNIT;
-  }
+  loc[0] = (uint64_t) ACTIONTOKEN;
+  heap_ptr obj = rts_apply( funobj , 1 );
+  return obj;
 }  
+
+// ioreturn :: a -> IO a 
+// :: a -> (ActionToken -> a)
+heap_ptr prim_IOReturn(heap_ptr obj, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
+  return obj;
+}
+
+// iobind :: IO a -> (a -> IO b) -> IO b 
+// :: (ActionToken -> a) -> (a -> ActionToken -> b) -> ActionToken -> b
+heap_ptr prim_IOBind(heap_ptr actionobj, heap_ptr funobj, heap_ptr token) {
+  stack_ptr loc1 = rts_stack_allocate(2);
+  loc1[0] = (uint64_t) funobj;                      // it can be relocated during the first call!
+  loc1[1] = (uint64_t) token;
+  heap_ptr x = rts_apply( actionobj , 1 );          // (f ActionToken)
+  stack_ptr loc2 = rts_stack_allocate(2);
+  loc2[0] = (uint64_t) ACTIONTOKEN;
+  loc2[1] = (uint64_t) x;                           // NB: opposite argument order!
+  heap_ptr y = rts_apply( (heap_ptr)loc1[0] , 2 );  // (g x ActionToken)
+  SP = loc1;
+  return y;
+}
 
 // -----------------------------------------------------------------------------
 
-// getChar# :: Unit -> Maybe Char
-heap_ptr prim_GetChar(heap_ptr arg1) {
+// getChar :: (ActionToken -> Maybe Char)
+heap_ptr prim_GetChar(heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   int c = getchar();
   if (c==EOF) { return NOTHING; } else { 
     heap_ptr obj = rts_allocate_datacon(CON_Just,1);
@@ -767,25 +786,28 @@ heap_ptr prim_GetChar(heap_ptr arg1) {
   }
 }
 
-// putChar# :: Char -> Unit
-heap_ptr prim_PutChar(heap_ptr arg1) {
+// putChar :: Char -> (ActionToken -> Unit)
+heap_ptr prim_PutChar(heap_ptr arg1, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   putchar(TO_INT(arg1));
   return UNIT;
 }
 
-// exit# :: Int -> Unit
-heap_ptr prim_Exit(heap_ptr arg1) {
+// exit :: Int -> (ActionToken -> Unit)
+heap_ptr prim_Exit(heap_ptr arg1, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   exit(TO_INT(arg1));
   return UNIT;
 }
 
-// print# :: String -> Unit
-heap_ptr prim_Print(heap_ptr arg1) {
+// print :: String -> (ActionToken -> Unit)
+heap_ptr prim_Print(heap_ptr arg1, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   rts_generic_println(arg1);
   return UNIT;
 }
 
-// error# :: String -> a
+// error :: String -> a
 heap_ptr prim_Error(heap_ptr arg1) {
   heap_ptr ptr = arg1;
   fputc('*',stderr);
@@ -802,8 +824,9 @@ heap_ptr prim_Error(heap_ptr arg1) {
   return UNIT;
 }
 
-// getArg# :: Int -> Maybe String
-heap_ptr prim_GetArg(heap_ptr arg1) {
+// getArg :: Int -> (ActionToken -> Maybe String)
+heap_ptr prim_GetArg(heap_ptr arg1, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   int j = TO_INT(arg1);
   if ( (j >= 0) && (j < ArgCount - 1) ) { 
     heap_ptr obj = rts_allocate_datacon(CON_Just,1);
@@ -831,8 +854,9 @@ heap_ptr prim_StdIn () { return (FROM_FILE(stdin )); }
 heap_ptr prim_StdOut() { return (FROM_FILE(stdout)); }
 heap_ptr prim_StdErr() { return (FROM_FILE(stderr)); }
 
-// hOpenFile# :: FilePath -> IOMode -> Handle
-heap_ptr prim_OpenFile(heap_ptr fnarg, heap_ptr modearg) {
+// hOpenFile :: FilePath -> IOMode -> (ActionToken -> Handle)
+heap_ptr prim_OpenFile(heap_ptr fnarg, heap_ptr modearg, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   const char *mode = c_file_mode_str(modearg);
   char fname[256];
   rts_marshal_to_cstring(256,fname,fnarg);
@@ -845,8 +869,9 @@ heap_ptr prim_OpenFile(heap_ptr fnarg, heap_ptr modearg) {
   return (FROM_FILE(handle));
 }
 
-// hGetChar# :: Handle -> Maybe Char
-heap_ptr prim_HGetChar(heap_ptr harg) {
+// hGetChar :: Handle -> (ActionToken -> Maybe Char)
+heap_ptr prim_HGetChar(heap_ptr harg, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   FILE *h = TO_FILE(harg);
   int c = fgetc( h );
 //  printf("||| hGetChar: %p %d\n",h,c);
@@ -857,22 +882,25 @@ heap_ptr prim_HGetChar(heap_ptr harg) {
   }
 }
 
-// hPutChar# :: Handle -> Char -> Unit
-heap_ptr prim_HPutChar(heap_ptr harg, heap_ptr carg) {
+// hPutChar :: Handle -> Char -> (ActionToken -> Unit)
+heap_ptr prim_HPutChar(heap_ptr harg, heap_ptr carg, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   fputc( TO_INT(carg) , TO_FILE(harg) );
   return UNIT;
 }
 
-// hPutStr# :: Handle -> String -> Unit
-heap_ptr prim_HPutStr(heap_ptr harg, heap_ptr sarg) {
+// hPutStr :: Handle -> String -> (ActionToken -> Unit)
+heap_ptr prim_HPutStr(heap_ptr harg, heap_ptr sarg, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   char cstr[1024];
   rts_marshal_to_cstring( 1024 , cstr, sarg );
   fputs( cstr , TO_FILE(harg) );
   return UNIT;
 }
 
-// hClose# :: Handle -> Unit
-heap_ptr prim_HClose(heap_ptr harg) {
+// hClose :: Handle -> (ActionToken -> Unit)
+heap_ptr prim_HClose(heap_ptr harg, heap_ptr token) {
+  CHECK_ACTION_TOKEN(token)
   fclose( TO_FILE(harg) );
   return UNIT;
 }

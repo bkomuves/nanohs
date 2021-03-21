@@ -13,6 +13,14 @@ Haskell features like type signatures, data type declarations and imports
 are parsed, but then ignored.
 
 
+Current status
+--------------
+
+* it compiles via GHC, both with and without optimization
+* it self-hosts with NanoHs optimizations disabled, but not with enabled (possible cause: the inlining phase)
+* it needs a large C stack (16-32 Mb)
+
+
 The surface language
 --------------------
 
@@ -58,11 +66,11 @@ Compilation pipeline
 1. lexer
 2. parser
 3. partition recursive lets using dependency analysis
-4. TODO: inline small functions 
-5. recognize primops
-6. TODO: eliminate pattern matching into simple branching on constructors
-7. collect data constructors
-8. scope checking & conversion to core language
+4. recognize primops
+5. TODO: eliminate pattern matching into simple branching on constructors
+6. collect data constructors
+7. scope checking & conversion to core language
+8. inline small functions + beta reduce + eliminate unused lets
 9. closure conversion
 10. TODO: compile to SSA intermediate language
 11. final code generation (different backends)

@@ -468,23 +468,11 @@ lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newline
 --------------------------------------------------------------------------------
 -- ** IO Monad
 
--- type IO a = RealWorld -> Pair RealWorld a
-
-ioreturn :: a -> IO a
-ioreturn x = (\token -> Pair token x)
+-- data ActionToken = ActionToken 
+-- type IO a = ActionToken -> a
 
 ioret_ :: IO Unit
-ioret_ = (\token -> Pair token Unit)
-
--- | Note: we have to be very careful about how to implement bind!
--- (because we are cheating with ML-style IO)
-iobind :: IO a -> (a -> IO b) -> IO b
-iobind action u token = case action token of { Pair token' x -> u x token' }
--- iobind action u = case action of { IO f -> IO (\q -> case u (f Unit) of { IO g -> g q } ) }
--- iobind action u _ = u (action Unit) Unit
-
-ioerror :: String -> IO a
-ioerror msg = (\token -> Pair token (error msg))
+ioret_ = ioreturn Unit
 
 ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
 ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
@@ -507,54 +495,23 @@ iomapM_ f list = case list of { Nil -> ioreturn Unit ; Cons x xs -> ioseq (f x) 
 ioforM_ :: List a -> (a -> IO b) -> IO Unit
 ioforM_ list f = iomapM_ f list
 
-getChar :: IO (Maybe Char)
-getChar = (\token -> Pair token (getChar# Unit))
-
-putChar :: Char -> IO Unit
-putChar c = (\token -> Pair token (putChar# c))
-
-exit :: Int -> IO Unit
-exit k = (\token -> Pair token (exit# k))
-
-print :: Show a => a -> IO Unit
-print what = (\token -> Pair token (print# what))
-
-getArg :: Int -> IO (Maybe String)
-getArg i = (\token -> Pair token (getArg# i))
-
 getArgs :: IO (List String)
-getArgs token = go 0 token where { go k = iobind (getArg k) (\mb -> case mb of 
+getArgs = go 0 where { go k = iobind (getArg k) (\mb -> case mb of 
   { Nothing   -> ioreturn Nil 
   ; Just this -> iobind (go (inc k)) (\rest -> ioreturn (Cons this rest)) })}
 
 putStr :: String -> IO Unit
-putStr s = (\token -> Pair token (hPutStr# stdout s))
--- putStr xs = case xs of { Nil -> ioret_ ; Cons y ys -> ioseq (putChar y) (putStr ys) }
+putStr s = hPutStr stdout s
 
 putStrLn :: String -> IO Unit
 putStrLn str = ioseq (putStr str) (putChar (chr 10)) 
 
 type FilePath = String
 
-openFile :: FilePath -> IOMode -> IO Handle
-openFile fn mode = (\token -> Pair token (openFile# fn mode))
-
-hClose :: Handle -> IO Unit
-hClose h = (\token -> Pair token (hClose# h))
-
-hGetChar :: Handle -> IO (Maybe Char)
-hGetChar h = (\token -> Pair token (hGetChar# h))
-
-hPutChar :: Handle -> Char -> IO Unit
-hPutChar h c = (\token -> Pair token (hPutChar# h c))
-
 hGetContents :: Handle -> IO String
 hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
   { Nothing -> ioreturn Nil 
   ; Just y  -> iobind go (\ys -> ioreturn (Cons y ys)) }) }
-
-hPutStr :: Handle -> String -> IO Unit
-hPutStr h s = (\token -> Pair token (hPutStr# h s))
 
 hPutStrLn :: Handle -> String -> IO Unit
 hPutStrLn h str = ioseq (hPutStr h str) (hPutChar h (chr 10)) 

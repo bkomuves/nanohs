@@ -1,7 +1,7 @@
 
 {-% include "Base.hs" %-}
 
-main = runIO# (iosequence_
+main = runIO (iosequence_
   [ print (Just 17)
   , putStrLn ""
   , putStrLn text2

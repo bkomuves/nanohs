@@ -42,7 +42,7 @@ con_Cons    = 4
 con_Nothing = 5
 con_Just    = 6
 con_Pair          = 7
-con_RealWorld     = 8
+con_ActionToken   = 8
 con_ReadMode      = 9
 con_WriteMode     = 10
 con_AppendMode    = 11
@@ -57,7 +57,7 @@ predefinedDataCons :: List (Pair String Int)
 predefinedDataCons =
   [ Pair "False" con_False , Pair "True" con_True , Pair "Unit"    con_Unit    , Pair "Pair" con_Pair
   , Pair "Nil"   con_Nil   , Pair "Cons" con_Cons , Pair "Nothing" con_Nothing , Pair "Just" con_Just 
-  , Pair "ReadMode"   con_ReadMode   , Pair "WriteMode"     con_WriteMode      , Pair "RealWorld" con_RealWorld   
+  , Pair "ReadMode"   con_ReadMode   , Pair "WriteMode"     con_WriteMode      , Pair "ActionToken" con_ActionToken
   , Pair "AppendMode" con_AppendMode , Pair "ReadWriteMode" con_ReadWriteMode ]
 
 -- | Collect data constructors from the source.
