@@ -1,7 +1,7 @@
 
 -- | Base library
 
-{-# LANGUAGE NoImplicitPrelude, MagicHash #-}
+{-# LANGUAGE CPP, NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings, OverloadedLists #-}
@@ -12,6 +12,15 @@ module Base where
 
 import Prelude ( Int , Char , Eq , Show )
 import PrimGHC
+
+--------------------------------------------------------------------------------
+-- debugging hacks
+
+#ifndef __GLASGOW_HASKELL__
+debug_ str x   = debug str x x
+debug  str x y = case action x ActionToken of { Unit -> y } 
+  where { action x = ioseq (putStr ">>> ") (ioseq (putStr str) (print x)) }
+#endif
 
 --------------------------------------------------------------------------------
 -- * Prelude

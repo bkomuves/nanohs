@@ -44,6 +44,9 @@ data Term
   | MainT
   deriving Show
 
+isLambdaTerm :: Term -> Bool
+isLambdaTerm term = case term of { LamT _ -> True ; _ -> False }
+
 data BranchT
   = BranchT (Named Con) Int Term
   | DefaultT Term

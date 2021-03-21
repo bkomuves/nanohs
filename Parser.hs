@@ -295,9 +295,10 @@ commentL = ppost commentL' eol
 
 -- | without EOL
 commentL' :: Lexer String
-commentL' = choice [ comment1 , comment2 ] where
+commentL' = choice [ comment1 , comment2 , comment3 ] where
   { comment1 = pseq (charTokens "--" ) (many (charNoneOf [newlineC,carriageReturnC]))
   ; comment2 = pseq (charTokens "{-#") (many (charNoneOf [newlineC,carriageReturnC]))
+  ; comment3 = pseq (charTokens "#"  ) (many (charNoneOf [newlineC,carriageReturnC]))
   }
 
 -- | We need to hide some stuff (for example @include@-s) from GHC
