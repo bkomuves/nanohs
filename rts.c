@@ -337,14 +337,14 @@ void rts_generic_print_limited(heap_ptr obj, int budget) {
       break;
     }
     case PTAG_PTR: {
-      // fputs("TODO: implement generic print for heap objects",stdout);
       uint64_t tagword = obj[0];
       switch(tagword & 0x07) {
         // data constructor
         case HTAG_DCON: {
           int con_idx   = (tagword & 0xffff) >> 3;
           int con_arity = (tagword >> 16) & 0xffff;
-          printf("(%s:%d/%d",ConstructorNames[con_idx],con_idx,con_arity);
+          // printf("(%s:%d/%d",ConstructorNames[con_idx],con_idx,con_arity);
+          printf("(%s/%d",ConstructorNames[con_idx],con_arity);
           if (budget > 0) {
             for(int i=0;i<con_arity;i++) {
               printf(" ");
