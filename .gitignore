@@ -1,3 +1,4 @@
+dist
 bck/
 *.o
 *.hi
@@ -9,6 +10,7 @@ tmp.asm
 *.exe
 nanohs_stage1.c
 nanohs_stage2.c
+nanohs_stage3.c
 a.txt
 test1.nano
 test2.nano

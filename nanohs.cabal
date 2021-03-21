@@ -1,0 +1,59 @@
+Cabal-Version:       2.4
+Name:                nanohs
+Version:             0.5
+Synopsis:            nanohs - a self-hosting lambda calculus compiler
+Description:         A self-hosting lambda calculus compiler. 
+                     See the README fore more information.
+                     
+License:             BSD-3-Clause
+Author:              Balazs Komuves
+Copyright:           (c) 2021 Balazs Komuves
+Maintainer:          bkomuves+hackage@gmail.com
+Homepage:            https://github.com/bkomuves/nanohs
+Stability:           Experimental
+Category:            Language
+Tested-With:         GHC == 8.6.5
+Build-Type:          Simple
+
+Source-repository head
+  type:                git
+  location:            https://github.com/bkomuves/nanohs
+
+--------------------------------------------------------------------------------
+
+library 
+
+  Build-Depends:       base >= 4 && < 5 
+  Hs-Source-Dirs:      .
+
+  exposed-modules:     Base
+                       Closure
+                       CodeGen
+                       Containers
+                       Core
+                       DataCon
+                       Dependency
+                       Eval
+                       Inliner
+                       Nano
+                       Parser
+                       PrimGHC
+                       PrimOps
+                       ScopeCheck
+                       Syntax
+                       Types
+
+  Default-Language:    Haskell2010
+  Default-extensions:  Strict, NoImplicitPrelude, FlexibleInstances, FlexibleContexts
+  Other-extensions:    CPP
+
+--------------------------------------------------------------------------------
+
+executable nanohs_bootstrap.exe
+
+  Build-Depends:       base >= 4 && < 5, nanohs >= 0.5
+  main-is:             main.hs
+  Default-Language:    Haskell2010
+  Hs-Source-Dirs:      .
+
+--------------------------------------------------------------------------------

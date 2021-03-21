@@ -154,7 +154,7 @@ catMaybes mbs = go mbs where { go list = case list of { Nil -> Nil ; Cons mb res
   case mb of { Nothing -> go rest ; Just x -> Cons x (go rest) } } }
 
 --------------------------------------------------------------------------------
--- ** Either, Pair, Triple
+-- ** Either
 
 data Either a b = Left a | Right b deriving Show
 

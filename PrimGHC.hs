@@ -1,4 +1,6 @@
 
+-- | Primops implemented in Haskell, so the compiler can be hosted by GHC too
+
 {-# LANGUAGE NoImplicitPrelude, MagicHash #-}
 {-# LANGUAGE Strict, StrictData #-}
 {-# LANGUAGE FlexibleInstances, TypeSynonymInstances, TypeFamilies #-}
@@ -19,12 +21,16 @@ import Prelude     ( Int , Char , Eq , Show )
 import Data.String ( IsString(..) )
 import GHC.Exts    ( IsList  (..) )
 
+--------------------------------------------------------------------------------
+
 import qualified Debug.Trace 
+
 debug :: Show a => List Char -> a -> b -> b 
 debug x y z = Debug.Trace.trace msg z where
   msg   = Prelude.concat parts
   parts :: [Prelude.String]
   parts = [ ">>> " , _toGhcString x , " => " , Prelude.show y ]
+
 debug_ :: Show b => List Char -> b -> b 
 debug_ x y = debug x y y
 
