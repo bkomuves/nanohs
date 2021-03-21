@@ -3,11 +3,12 @@ NanoHaskell: a self-hosting lambda calculus compiler
 ====================================================
 
 The goal of this experiment is to create a self-hosting lambda calculus
-compiler (and interpreter).
+compiler (and interpreter) in a minimal amount of Haskell-style code.
 
 The language is (strict) lambda calculus + data constructors + simple
-pattern matching. The syntax is chosen so that a program can be also a 
-valid Haskell program at the same time (this makes development much easier).
+pattern matching + recursive lets. The syntax is chosen so that a program can 
+be also a valid Haskell program at the same time (this makes development much 
+easier).
 
 Haskell features like type signatures, data type declarations and imports
 are parsed, but then ignored.
@@ -18,16 +19,30 @@ Current status
 
 * it compiles via GHC, both with and without optimizations
 * it self-hosts, both with and without optimizations
-* it needs a large C stack (16-32 Mb) + GCC optims (because of the lack of tail call elims)
-* source code: about 1900 "essential" lines + 520 lines of type annotations; C runtime: ~600 lines
+* it needs a large C stack (16-32 Mb) + GCC optims (because of the lack of tail call elimination)
+* source code: about 1900 "essential" lines + 520 lines of type annotations; C runtime: \~650 lines
+  (including some debugging features)
+* the interpreter does not work at the moments
+
+
+Usage
+-----
+
+    $ nanohs -c input.hs output.c            # compile with optimizations disabled
+    $ nanhos -o input.hs output.c            # compile with optimizations enabled
+    $ nanhos -i input.hs [arg1 [arg2 ...]]   # interpret (does not work at the moment)
+
+
+Haskell imports are ignored, but you can use C-style includes with the pragma
+
+    {-% include "othermodule.hs" %-}
+
 
 The surface language
 --------------------
 
-The idea is to write a self-hosting compiler (and interpreter) in
-a very small subset of Haskell (basically untyped lambda calculus +
-constructors); but with Haskell-compatible syntax, so that the same
-program can be also executed by GHC:
+The idea is to use a subset of Haskell syntax, so that the same program same
+program can be also compiled / interpreted by GHC. 
 
 * no static type system (untyped lambda calculus) - but maybe there should be a type checker after all?
 * na data type declarations (constructors are arbitrary capitalized names)
@@ -49,7 +64,7 @@ itself by recognizing and ignoring GHC-specific lines (pragmas, imports,
 type signatures, datatype declarations, type synonyms). We just put
 primops implementations into a PrimGHC module (as imports are ignored).
 
-We could have several backends:
+We could in theory have several backends:
 
 * C99 on 64 bit architectures
 * TODO: x86-64 assembly
@@ -72,7 +87,7 @@ Compilation pipeline
 7. scope checking & conversion to core language
 8. inline small functions + beta reduce + eliminate unused lets
 9. closure conversion
-10. TODO: compile to SSA intermediate language
+10. TODO: compile to some low-level intermediate language
 11. final code generation (different backends)
 
 
