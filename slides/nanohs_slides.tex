@@ -120,7 +120,7 @@ In fact, a type checker should be probably added, after all; but I wanted to kee
 \item scope checking \& conversion to core language
 \item inline small functions + some basic optimizations
 \item closure conversion
-\item TODO: compile to an SSA intermediate language
+\item TODO: compile to a low-level intermediate language
 \item final code generation 
 \end{enumerate}
 
@@ -187,13 +187,37 @@ compiler is hard work, you don't want to do it in a limited language!
    \begin{itemize}
    \item exact details of lazyness vs. strictness
    \item controlling exactly where heap / stack allocations can happen
-   \item recursive lets
+   \item recursive lets 
    \end{itemize}
 \item Not having debugging support from early on (for example: good error messages, 
       threading names \& source locations, RTS features, pretty printing AST-s)
 \item Trying to target assembly first, instead of a simpler target like C; it's just extra cognitive load
-\item Generatic code directly, without having a low-level IL
+\item Generating code directly, without having a low-level IL
 \item Using de Bruijn indices (as opposed to levels) in the generated code
+\end{itemize}
+}
+
+\end{frame}
+
+%------------------------------------------------------------------------------%
+
+\begin{frame}{Bug gallery}
+
+{\small
+Some examples of bugs which were really painful to debug:
+
+\begin{itemize}
+\item IO ordering bugs (GHC \emph{really} likes to optimize my IO implementations away...)
+\item GC liveness bugs (see the next slide)
+\item stack management, and using de Bruijn indices in the generated code
+\item C stack overflow gives you a segfault with no information
+\item thunks (there shouldn't be any, this is supposed to be a strict language after all...)
+\item recursive lets are a PITA if you allow non-lambdas
+\item there was a very simple bug (wrong variable name) in the implementation of generic
+application in the RTS which was not triggered by compiling the whole compiler, only
+after I did inlining
+\item inlining code which does computation makes the runtime blow up exponentially,
+      which looks \emph{very} similar to an infinite loop...
 \end{itemize}
 }
 
