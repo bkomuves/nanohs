@@ -99,7 +99,7 @@ loadModules inputFn =
       ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins1 -> let 
         { dconTrie = collectDataCons defins1
         ; program  = reorderProgram  defins1
-        ; coreprg  = programToCoreProgram program
+        ; coreprg  = programToCoreProgram dconTrie program
         } in ioreturn (PrgData strlits dconTrie coreprg) })}) 
 
 type Files  = List FilePath

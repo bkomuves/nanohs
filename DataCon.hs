@@ -34,14 +34,14 @@ isDCon name = isUpper (head name)
 -- -- | Mapping constructor names to constructor tags
 -- type DataConTable = Trie Con
 
-con_False   = 0
-con_True    = 1
-con_Unit    = 2
-con_Nil     = 3
-con_Cons    = 4
-con_Nothing = 5
-con_Just    = 6
-con_Pair          = 7
+con_False    = 0
+con_True     = 1
+con_Unit     = 2
+con_Nil      = 3
+con_Cons     = 4
+con_Nothing  = 5
+con_Just     = 6
+con_Pair     = 7
 con_ActionToken   = 8
 con_ReadMode      = 9
 con_WriteMode     = 10

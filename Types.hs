@@ -153,7 +153,7 @@ data Atom
 prettyAtom :: Atom -> String
 prettyAtom atom = case atom of
   { VarA nvar -> append (nameOf nvar) (prettyVar (forgetName nvar))
-  ; ConA ncon -> nameOf ncon
+  ; ConA ncon -> case ncon of { Named name con -> append3 name ":" (showNat con) }
   ; KstA lit  -> showLiteral lit }
 
 --------------------------------------------------------------------------------

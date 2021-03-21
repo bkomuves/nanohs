@@ -86,7 +86,7 @@ compile fname = do
 ----  Prelude.putStrLn "\n----------------------------------\nSYNTAX BLOCKS"
 ----  Control.Monad.mapM_ Prelude.print (_toGhcList toplevs)
 
-  loaded <- runIO# (loadAndParse1 Nil source)
+  loaded <- runIO (loadAndParse1 Nil source)
   let toplevs = snd loaded
 
   let defins0 = catMaybes (map mbDefin toplevs)
@@ -95,15 +95,14 @@ compile fname = do
   Control.Monad.mapM_ Prelude.print (_toGhcList (recogPrimApps defins1))
 
   let dconTrie = collectDataCons defins1
---  Prelude.putStrLn "\n----------------------------------\nCONSTURCTORS"
---  Control.Monad.mapM_ Prelude.print (_toGhcList (trieToList dconTrie))
+  Prelude.putStrLn "\n----------------------------------\nCONSTRUCTORS"
+  Control.Monad.mapM_ Prelude.print (_toGhcList (trieToList dconTrie))
 
   let blocks = reorderProgram defins1
   Prelude.putStrLn "\n----------------------------------\nREORDERED TOPLEVEL DEFINS"
   Control.Monad.mapM_ Prelude.print (_toGhcList blocks)
 
-
-  let coreprg@(CorePrg coredefs mainIdx mainTerm) = programToCoreProgram blocks
+  let coreprg@(CorePrg coredefs mainIdx mainTerm) = programToCoreProgram dconTrie blocks
   Prelude.putStrLn "\n----------------------------------\nCORE"
   Control.Monad.mapM_ myPrettyTermBlock (_toGhcList coredefs)
   Prelude.print (mainIdx,mainTerm)

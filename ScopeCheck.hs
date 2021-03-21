@@ -44,12 +44,11 @@ nanoMainIs = "main"
 exprToCore :: DataConTable -> Scope -> Expr -> Term
 exprToCore dconTable iniScope expr = scopeCheck dconTable iniScope (recogPrimApps1 expr)
 
-programToCoreProgram :: Program Expr -> CoreProgram
-programToCoreProgram blocks = CorePrg (map worker blocks) mainIdx mainTerm where
+programToCoreProgram :: DataConTable -> Program Expr -> CoreProgram
+programToCoreProgram dconTable blocks = CorePrg (map worker blocks) mainIdx mainTerm where
   { duplicate n  = concat [ "multiple declaration of " , quoteString n ]
   ; defins_      = forgetBlockStructure blocks
   ; topLevScope  = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins_))
-  ; dconTable    = collectDataCons defins_
   ; worker block = case block of 
       { NonRecursive defin  -> NonRecursive (     fmapDefin (exprToCore dconTable topLevScope)  defin )
       ; Recursive    defins -> Recursive    (map (fmapDefin (exprToCore dconTable topLevScope)) defins) }
