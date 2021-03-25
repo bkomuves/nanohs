@@ -283,7 +283,7 @@ liftedToCode nfo lifted = case lifted of
   ; LamF body         -> closureToCode nfo body
   ; AppF _ _          -> case recogAppsF lifted of { Pair fun args -> applicationToCode nfo fun args }
   ; RecF n closs body -> letrecToCode nfo n (map forgetName closs) body
-  ; LetF   clos  body -> letToCode nfo clos body
+  ; LetF b clos  body -> letToCode nfo b clos body
   }
 
 lazyPrimToCode :: StatInfo -> Prim -> List Lifted -> CodeGenM Name
@@ -313,14 +313,16 @@ lazyPrimToCode nfo prim args = case prim of
 -- TODO: hmm, what happens when the let-bound thing becomes a closure with zero arity but with
 -- some environment, so we want to evaluate it? the environment is on the heap, and may be
 -- this is the only closure which refers to it??? 
-letToCode :: StatInfo -> ClosureF -> Lifted -> CodeGenM Name
-letToCode nfo cls body = 
+letToCode :: StatInfo -> Bool -> ClosureF -> Lifted -> CodeGenM Name
+letToCode nfo evalFlag cls body = 
   withFreshVar3 "tmp" "loc" "obj"       (\tmp loc obj -> 
   sbind (addLine  "// let ")            (\_    -> 
   sbind (closureToCode nfo cls)         (\val1 -> 
-  sbind (addWords [ "heap_ptr "  , tmp , " = rts_force_value( (heap_ptr) " , val1 , ");" ])  (\_ ->
-  sbind (addWords [ "stack_ptr " , loc , " = rts_stack_allocate(1);" ])                      (\_ ->
-  sbind (addWords [ loc  , "[0] = (uint64_t) " , tmp , " ;" ])                               (\_ ->
+  sbind (addWords (ifte evalFlag 
+    [ "heap_ptr "  , tmp , " = rts_force_value( (heap_ptr) " , val1 , ");" ]
+    [ "heap_ptr "  , tmp , " = (heap_ptr) " , val1 , ";"                   ]))    (\_ ->
+  sbind (addWords [ "stack_ptr " , loc , " = rts_stack_allocate(1);" ])           (\_ ->
+  sbind (addWords [ loc  , "[0] = (uint64_t) " , tmp , " ;" ])                    (\_ ->
   sbind (evalExprToReg nfo "body" body) (\res -> 
   sbind (addDefin obj res)              (\_   ->    
   sbind (addWords [ "SP = " , loc , ";" ]) (\_ -> 

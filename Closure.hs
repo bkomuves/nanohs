@@ -40,7 +40,9 @@ import ScopeCheck
 -- pattern ConF ncon = AtmF (ConA ncon)
 -- pattern KstF lit  = AtmF (KstA lit )
 
--- | We lift all lambdas (and lets, and branch right hand sides) to top-level
+-- | We lift all lambdas (and lets, and branch right hand sides) to top-level.
+-- Note: In @LetF@, the Bool is there to note whether the bound expression needs to
+-- be evaluated immediately.
 data Lifted
   = AtmF Atom
   | AppF Lifted Atom
@@ -49,7 +51,7 @@ data Lifted
   | CasF LAtom (List BranchF)
   | LamF ClosureF
   | RecF Int (List (Named ClosureF)) Lifted
-  | LetF ClosureF Lifted
+  | LetF Bool ClosureF Lifted
   deriving Show
 
 data BranchF
@@ -254,11 +256,24 @@ termToInlineClosure name subs level tm =
   sbind (closureConvert name subs level tm) (\lifted ->
   sreturn (ClosureF (InlineBody lifted) Nil 0))
 
+-- | Whether to make a static function out of this closure
 doInlineClosure :: Term -> Bool
 doInlineClosure tm = case tm of
-  { LamT _     -> False
-  ; AtmT _     -> True
-  ; _          -> le (termSize tm) 64 }  
+  { LamT _  -> False
+  ; AtmT _  -> True
+  ; _       -> le (termSize tm) 64 }  
+
+-- | In let bindings, it can happen that we bind some computation.
+-- Since on the stack there should be only values, in this case
+-- we have to evaluate them. On the other hand, for example lambdas and 
+-- atoms do not need to be evaluated.
+needsToBeEvaluated :: Term -> Bool
+needsToBeEvaluated tm = case tm of
+  { LamT _        -> False 
+  ; AtmT _        -> False
+  ; LetT _   body -> needsToBeEvaluated body
+  ; RecT _ _ body -> needsToBeEvaluated body
+  ; _             -> True }
 
 termToClosure :: Name -> Subs -> Level -> Term -> ClosM ClosureF
 termToClosure name subs level term = ifte (doInlineClosure term) 
@@ -290,7 +305,8 @@ closureConvert nameprefix subs level term = go level term where
     ; CasT lv brs   -> sfmap (CasF (lfmap (goAtom level) lv)) (smapM (goBranch level) brs)
     ; RecT n nts tm -> let { level' = plus level n }
                        in  sliftA2 (RecF n) (smapM (goRec1 level') nts) (go level' tm) 
-    ; LetT ntm body -> case ntm of { Named name tm -> sliftA2 LetF (termToClosure (prefixed name) subs level tm) (go (inc level) body) } }
+    ; LetT ntm body -> case ntm of { Named name tm -> sliftA2 (LetF (needsToBeEvaluated tm)) 
+                         (termToClosure (prefixed name) subs level tm) (go (inc level) body) } }
   ; goRec1 level named = case named of { Named name tm -> 
       sfmap (Named name) (termToStaticClosure (prefixed name) subs level tm) }
   ; goBranch level br  = case br of
