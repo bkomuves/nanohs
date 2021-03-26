@@ -407,6 +407,9 @@ showBool b = case b of { True -> "True" ; False -> "False" }
 showChar :: Char -> String
 showChar c = Cons singleQuoteC (Cons c (Cons singleQuoteC Nil))
 
+showString :: String -> String
+showString s = doubleQuoteString s
+
 showNat :: Int -> String
 showNat n = ifte (lt n 0) (error "showNat: negative") (worker n) where
   { worker n = ifte (eq n 0) "0" (reverse (go n))
@@ -431,7 +434,7 @@ readInt str = case str of
   ; Cons x xs -> ifte (ceq x '-') (mbfmap negate (readNat xs)) (readNat str) }
 
 quoteChar :: Char -> String
-quoteChar x = Cons '`' (Cons x (Cons '`' Nil))
+quoteChar x = Cons singleQuoteC (Cons x (Cons singleQuoteC Nil))
 
 delimString :: Char -> Char -> String -> String
 delimString l r xs = Cons l (append xs (Cons r Nil))
@@ -483,6 +486,15 @@ lines xs = case xs of { Nil -> Nil ; Cons _ _ -> case span (\x -> cneq x newline
 ioret_ :: IO Unit
 ioret_ = ioreturn Unit
 
+iofmap :: (a -> b) -> IO a -> IO b
+iofmap f action = iobind action (\x -> ioreturn (f x))
+
+iojoin :: IO (IO a) -> IO a
+iojoin producer = iobind producer id
+
+iocompose :: (b -> IO c) -> (a -> IO b) -> a -> IO c
+iocompose g f = \x -> iobind (f x) g
+
 ioliftA2 :: (a -> b -> c) -> IO a -> IO b -> IO c
 ioliftA2 f act1 act2 = iobind act1 (\x -> iobind act2 (\y -> ioreturn (f x y)))
 
@@ -518,9 +530,9 @@ putStrLn str = ioseq (putStr str) (putChar (chr 10))
 type FilePath = String
 
 hGetContents :: Handle -> IO String
-hGetContents h = go where { go = iobind (hGetChar h) (\mb -> case mb of 
+hGetContents h = go h where { go h = iobind (hGetChar h) (\mb -> case mb of 
   { Nothing -> ioreturn Nil 
-  ; Just y  -> iobind go (\ys -> ioreturn (Cons y ys)) }) }
+  ; Just y  -> iobind (go h) (\ys -> ioreturn (Cons y ys)) }) }
 
 hPutStrLn :: Handle -> String -> IO Unit
 hPutStrLn h str = ioseq (hPutStr h str) (hPutChar h (chr 10)) 

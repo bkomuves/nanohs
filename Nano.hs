@@ -70,7 +70,7 @@ printUsage = iomapM_ putStrLn
   , "./nanohs -o <input.hs> <output.c>    # compile with optimizations"     ] 
 
 runCompiler :: Bool -> FilePath -> FilePath -> IO Unit
-runCompiler optimize inputFn outputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
+runCompiler optimize inputFn outputFn = iobind (loadModules Compile inputFn) (\prgdata -> case prgdata of { 
   PrgData strlits dconTrie coreprg -> 
     iosequence_ 
       [ putStrLn (append "compiling with optimizations " (ifte optimize "enabled" "disabled"))
@@ -80,26 +80,27 @@ runCompiler optimize inputFn outputFn = iobind (loadModules inputFn) (\prgdata -
       , putStrLn "done." ]})
 
 runInterpreter :: FilePath -> IO Unit
-runInterpreter inputFn = iobind (loadModules inputFn) (\prgdata -> case prgdata of { 
-  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg blocks _mainIdx main ->
+runInterpreter inputFn = iobind (loadModules Interpret inputFn) (\prgdata -> case prgdata of { 
+  PrgData strlits dconTrie coreprg -> case coreprg of { CorePrg blocks mainIdx _main ->
     ioseq (putStrLn "interpreting...") (let 
-     { toplevs  = map definedWhat (forgetBlockStructure blocks)
-     ; startEnv = Env toplevs Nil strlits
-     } in printValue (eval startEnv main)) }})
+      { bigterm = termLevelsToIndices 0 (programToTerm blocks)
+      ; dconNames = mapFromList (map swap (trieToList dconTrie))
+      ; staticEnv = StaticEnv dconNames strlits mainIdx
+      } in iobind (eval staticEnv NilEnv bigterm) (printValue dconNames) )}})
     
 --------------------------------------------------------------------------------
 -- ** Load and parse source files
 
 data ProgramData = PrgData (List String) DataConTable CoreProgram
 
-loadModules :: FilePath -> IO ProgramData
-loadModules inputFn =
+loadModules :: Mode -> FilePath -> IO ProgramData
+loadModules mode inputFn =
   iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> (let 
       { defins0  = catMaybes (map mbDefin toplevs)
       ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins1 -> let 
         { dconTrie = collectDataCons defins1
         ; program  = reorderProgram  defins1
-        ; coreprg  = programToCoreProgram dconTrie program
+        ; coreprg  = programToCoreProgram mode dconTrie program
         } in ioreturn (PrgData strlits dconTrie coreprg) })}) 
 
 type Files  = List FilePath

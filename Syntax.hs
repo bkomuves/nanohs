@@ -169,12 +169,12 @@ saturatePrimApp loc primop args = case primop of { PrimOp arity prim -> case com
   where { nargs = length args }
 
 -- | Recognize primop applications, and saturate them if necessary
-recogPrimApps :: List DefinE -> List DefinE
-recogPrimApps prg = map (fmapDefin recogPrimApps1) prg
+recogPrimApps :: Mode -> List DefinE -> List DefinE
+recogPrimApps mode prg = map (fmapDefin (recogPrimApps1 primops)) prg where { primops = thePrimOps mode }
 
 -- | Recognize primop applications, and saturate them if necessary
-recogPrimApps1 :: Expr -> Expr
-recogPrimApps1 = go where
+recogPrimApps1 :: Trie PrimOp -> Expr -> Expr
+recogPrimApps1 primops = go where
   { goVar lname = case trieLookup (located lname) primops of
       { Nothing        -> VarE lname
       ; Just primop    -> saturatePrimApp (location lname) primop [] }

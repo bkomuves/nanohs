@@ -74,6 +74,9 @@ showTerm term = case term of
   ; CasT la brs     -> concat [ "case " , showAtom (located la) , " of { " ,intercalate " ; " (map showBranchT brs) , " }" ]
   ; MainT           -> "<main>" }
 
+showTermList :: List Term -> String
+showTermList tms = append3 "[" (intercalate "," (map showTerm tms)) "]"
+
 showNamedTerm :: Named Term -> String
 showNamedTerm nterm = case nterm of { Named n t -> append3 n " = " (showTerm t) }
 

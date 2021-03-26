@@ -6,12 +6,12 @@ The goal of this experiment is to create a self-hosting lambda calculus
 compiler (and interpreter) in a minimal amount of Haskell-style code.
 
 The language is (strict) lambda calculus + data constructors + simple
-pattern matching + recursive lets. The syntax is chosen so that a program can 
-be also a valid Haskell program at the same time (this makes development much 
-easier).
+pattern matching + recursive lets + IO effects. The syntax is chosen so that 
+a program can be also a valid Haskell program at the same time (this makes 
+development much easier).
 
 Haskell features like type signatures, data type declarations and imports
-are parsed, but then ignored.
+are parsed (well, recognized...), but then ignored.
 
 
 Current status
@@ -119,8 +119,7 @@ Heap pointers are also tagged:
 * static function pointers
 * foreign pointers (used for file handles in the C runtime)
 
-There are no thunks because we are strict (well currently there are, but that's
-temporary).
+There are no thunks on the heap because we are strict.
 
 The garbage collector is a very simple copying (compacting) GC.
 

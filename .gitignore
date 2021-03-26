@@ -2,6 +2,7 @@ dist
 bck/
 *.o
 *.hi
+*.ll
 a.out
 tmp.c
 tmp1.c

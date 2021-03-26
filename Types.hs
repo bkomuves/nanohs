@@ -51,6 +51,13 @@ type Static = Int
 -- | Mapping constructor names to constructor tags
 type DataConTable = Trie Con
 
+-- | Are we compiling or interpreting? This is relevant with primops, 
+-- where the two behaves differently...
+data Mode
+  = Compile
+  | Interpret
+  deriving Show
+
 --------------------------------------------------------------------------------
 -- ** Named things
 
@@ -241,11 +248,14 @@ type LToken = Located Token
 --------------------------------------------------------------------------------
 -- * matching on short lists
 
-unary   :: List a -> (a -> b)           -> b
-binary  :: List a -> (a -> a -> b)      -> b
+nullary :: List a ->                 b  -> b
+unary   :: List a -> (a ->           b) -> b
+binary  :: List a -> (a -> a ->      b) -> b
 ternary :: List a -> (a -> a -> a -> b) -> b
-unary   args f = case args of { Cons x xs -> f x             ; Nil -> error "unary: not enough arguments"   }
-binary  args f = case args of { Cons x xs -> unary  xs (f x) ; Nil -> error "binary: not enough arguments"  }
-ternary args f = case args of { Cons x xs -> binary xs (f x) ; Nil -> error "ternary: not enough arguments" }
+
+nullary args f = case args of { _         -> f               }
+unary   args f = case args of { Cons x xs -> f x             ; _ -> error "unary: not enough arguments"   }
+binary  args f = case args of { Cons x xs -> unary  xs (f x) ; _ -> error "binary: not enough arguments"  }
+ternary args f = case args of { Cons x xs -> binary xs (f x) ; _ -> error "ternary: not enough arguments" }
 
 --------------------------------------------------------------------------------

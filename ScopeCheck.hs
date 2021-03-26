@@ -41,17 +41,18 @@ nanoMainIs = "main"
 --------------------------------------------------------------------------------
 -- * conversion to core
    
-exprToCore :: DataConTable -> Scope -> Expr -> Term
-exprToCore dconTable iniScope expr = scopeCheck dconTable iniScope (recogPrimApps1 expr)
+exprToCore :: Trie PrimOp -> DataConTable -> Scope -> Expr -> Term
+exprToCore primops dconTable iniScope expr = scopeCheck dconTable iniScope (recogPrimApps1 primops expr)
 
-programToCoreProgram :: DataConTable -> Program Expr -> CoreProgram
-programToCoreProgram dconTable blocks = CorePrg (map worker blocks) mainIdx mainTerm where
-  { duplicate n  = concat [ "multiple declaration of " , quoteString n ]
+programToCoreProgram :: Mode -> DataConTable -> Program Expr -> CoreProgram
+programToCoreProgram mode dconTable blocks = CorePrg (map worker blocks) mainIdx mainTerm where
+  { primops      = thePrimOps mode
+  ; duplicate n  = concat [ "multiple declaration of " , quoteString n ]
   ; defins_      = forgetBlockStructure blocks
   ; topLevScope  = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins_))
   ; worker block = case block of 
-      { NonRecursive defin  -> NonRecursive (     fmapDefin (exprToCore dconTable topLevScope)  defin )
-      ; Recursive    defins -> Recursive    (map (fmapDefin (exprToCore dconTable topLevScope)) defins) }
+      { NonRecursive defin  -> NonRecursive (     fmapDefin (exprToCore primops dconTable topLevScope)  defin )
+      ; Recursive    defins -> Recursive    (map (fmapDefin (exprToCore primops dconTable topLevScope)) defins) }
   ; no_main_err = \_ -> error (concat [ "entry point " , quoteString nanoMainIs , " not found" ]) 
   ; mainIdx = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
       { TopL k -> k ; _ -> no_main_err Unit } ; _ -> no_main_err Unit }  
