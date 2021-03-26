@@ -48,11 +48,11 @@ programToCoreProgram :: Mode -> DataConTable -> Program Expr -> CoreProgram
 programToCoreProgram mode dconTable blocks = CorePrg (map worker blocks) mainIdx mainTerm where
   { primops      = thePrimOps mode
   ; duplicate n  = concat [ "multiple declaration of " , quoteString n ]
-  ; defins_      = forgetBlockStructure blocks
+  ; defins_      = map located (forgetBlockStructure blocks)
   ; topLevScope  = trieFromListUnique duplicate (zipWithIndex (\n i -> Pair n (TopL i)) (map definedName defins_))
   ; worker block = case block of 
-      { NonRecursive defin  -> NonRecursive (     fmapDefin (exprToCore primops dconTable topLevScope)  defin )
-      ; Recursive    defins -> Recursive    (map (fmapDefin (exprToCore primops dconTable topLevScope)) defins) }
+      { NonRecursive defin  -> NonRecursive (     fmapLDefin (exprToCore primops dconTable topLevScope)  defin )
+      ; Recursive    defins -> Recursive    (map (fmapLDefin (exprToCore primops dconTable topLevScope)) defins) }
   ; no_main_err = \_ -> error (concat [ "entry point " , quoteString nanoMainIs , " not found" ]) 
   ; mainIdx = case trieLookup nanoMainIs topLevScope of { Just varl -> case varl of
       { TopL k -> k ; _ -> no_main_err Unit } ; _ -> no_main_err Unit }  
@@ -98,12 +98,12 @@ scopeCheck dcontable = go 0 where
         { Just atom -> AppT (go level scope e1) atom
         ; Nothing   -> LetT (Named "letx" (go level scope e2)) (AppT (go (inc level) scope e1) (VarA (Named "letx" (IdxV 0)))) }
     ; LamE  name body -> LamT (Named name (go (inc level) (trieInsert name (LevL level) scope) body))
-    ; LetE  defs body -> case defs of { Nil -> go level scope body ; Cons defin rest -> case defin of 
+    ; LetE  defs body -> case defs of { Nil -> go level scope body ; Cons defin rest -> case located defin of 
         { Defin name rhs -> let { tm = go level scope rhs ; scope' = trieInsert name (LevL level) scope }
                             in  LetT (Named name tm) (go (inc level) scope' (LetE rest body)) } }
     ; RecE  defs body -> let { n = length defs ; level' = plus level n
         ; f scp nameidx = case nameidx of { Pair name j -> trieInsert name (LevL j) scp }
-        ; scope' = foldl f scope (zip (map definedName defs) (rangeFrom level n))
+        ; scope' = foldl f scope (zip (map ldefinedName defs) (rangeFrom level n))
         } in RecT n (map (goDefin level' scope') defs) (go level' scope' body)
     ; CaseE lwhat brs -> case lwhat of { Located loc what -> case mbAtom level scope what of
         { Just atom -> goCase level scope loc atom brs
@@ -137,7 +137,7 @@ scopeCheck dcontable = go 0 where
   -- ; goArgs level scope args body = case args of 
   --     { Nil            -> body 
   --     ; Cons this rest -> LetT (go level scope this) (goArgs (inc level) scope rest body) }
-  ; goDefin level scope defin = case defin of { Defin name what -> Named name (go level scope what) }
+  ; goDefin level scope defin = case located defin of { Defin name what -> Named name (go level scope what) }
   ; goCase level scope loc var branches = CasT (Located loc var) (map goBranch branches) where
     { goBranch branch = case branch of
         { DefaultE         rhs -> DefaultT (go level scope rhs)

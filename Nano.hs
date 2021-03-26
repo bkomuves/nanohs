@@ -98,7 +98,7 @@ loadModules mode inputFn =
   iobind (loadAndParse1 Nil inputFn) (\pair -> case pair of { Pair files toplevs -> (let 
       { defins0  = catMaybes (map mbDefin toplevs)
       ; dpair    = extractStringConstants defins0 } in case dpair of { Pair strlits defins1 -> let 
-        { dconTrie = collectDataCons defins1
+        { dconTrie = collectDataCons (map located defins1)
         ; program  = reorderProgram  defins1
         ; coreprg  = programToCoreProgram mode dconTrie program
         } in ioreturn (PrgData strlits dconTrie coreprg) })}) 

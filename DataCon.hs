@@ -107,6 +107,6 @@ collectDataConsWorker expr = go expr where
     } 
   ; lgo lexpr = case lexpr of { Located loc expr -> sfmap (Located loc) (go expr) } 
   ; goLet defs body = sseq 
-      (smapM_ (\defin -> case defin of { Defin _ rhs -> go rhs }) defs ) (go body) }
+      (smapM_ (\defin -> case located defin of { Defin _ rhs -> go rhs }) defs ) (go body) }
 
 --------------------------------------------------------------------------------

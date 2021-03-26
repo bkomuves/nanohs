@@ -141,8 +141,8 @@ many1 p = pbind p        (\x ->
           pbind (many p) (\xs -> preturn (Cons x xs)))
 
 manyTill :: Parser tok end -> Parser tok a -> Parser tok (List a)
-manyTill end p = go where { go = alternative (preplace Nil end)
-  (pbind p (\x -> pbind go (\xs -> preturn (Cons x xs)))) }
+manyTill end p = go Fake where { go Fake = alternative (preplace Nil end)
+  (pbind p (\x -> pbind (go Fake) (\xs -> preturn (Cons x xs)))) }
 
 sepEndBy :: Parser tok sep -> Parser tok end -> Parser tok a -> Parser tok (List a)
 sepEndBy sep end p = alternative (preplace Nil end) (sepEndBy1 sep end p)
@@ -317,11 +317,11 @@ type LexBlock = List LToken
 
 -- | Parser a line and all following indented lines
 blockL :: Lexer LexBlock
-blockL = worker1 where
-  { line    = alternative comment (many1 (locatedL lexemeL))
-  ; comment = pseq commentL' (preturn Nil)
-  ; worker  = pbind eolIndent (\k -> ifte (gt k 0) (option Nil worker1) (preturn Nil))
-  ; worker1 = pbind line      (\ls1 -> pbind worker (\ls2 -> preturn (append ls1 ls2)))
+blockL = worker1 Fake where
+  { line      = alternative comment (many1 (locatedL lexemeL))
+  ; comment   = pseq commentL' (preturn Nil)
+  ; worker  _ = pbind eolIndent (\k -> ifte (gt k 0) (option Nil (worker1 Fake)) (preturn Nil))
+  ; worker1 _ = pbind line      (\ls1 -> pbind (worker Fake) (\ls2 -> preturn (append ls1 ls2)))
   }
 
 blockOrCommentL :: Lexer (Maybe LexBlock)
@@ -363,7 +363,7 @@ topLevelP = choice
   , includeP
   , moduleP
   , tyDeclP
-  , pfmap TopDefin definP
+  , pfmap TopDefin ldefinP
   ]
 
 tyDeclP :: Parse TopLevel
@@ -400,13 +400,16 @@ definP f p t =
   pbind (specP EqualSign) (\_    ->
   pbind exprP             (\body -> preturn (Defin name (lamsE args body)) ))))  f p t 
 
+ldefinP :: Parse LDefinE
+ldefinP f p t = locatedL definP f p t
+
 exprP :: Parse Expr
 exprP f p t = 
   pbind nakedExprP             (\expr ->
   pbind (optional whereBlockP) (\mb   ->
   preturn (case mb of { Nothing -> expr ; Just defs -> RecE defs expr } )))  f p t 
 
-whereBlockP :: Parse (List DefinE)
+whereBlockP :: Parse (List LDefinE)
 whereBlockP f p t = pbind (keywordP "where") (\_ -> blockP) f p t 
 
 -- | Here \"naked\" means without a where block
@@ -458,12 +461,12 @@ inParensP p = pbind (specP LParen) (\_ ->
 
 listExprP  :: Parse (List Expr   )
 tupleExprP :: Parse (List Expr   )
-blockP     :: Parse (List DefinE )
+blockP     :: Parse (List LDefinE)
 branchesP  :: Parse (List BranchE)
 
 listExprP  f p t = pbind (specP LBracket) (\_ -> sepEndBy (specP Comma    ) (specP RBracket) exprP  ) f p t
 tupleExprP f p t = pbind (specP LParen  ) (\_ -> sepEndBy (specP Comma    ) (specP RParen  ) exprP  ) f p t
-blockP     f p t = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) definP ) f p t
+blockP     f p t = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) ldefinP) f p t
 branchesP  f p t = pbind (specP LBrace  ) (\_ -> sepEndBy (specP Semicolon) (specP RBrace  ) branchP) f p t
 
 patternP :: Parse Pattern
@@ -500,7 +503,7 @@ lamExprP f p t  =
   pbind (specP Arrow ) (\_    ->
   pbind exprP          (\body -> preturn (lamsE args body))))) f p t 
 
-letExprP' :: (List DefinE -> Expr -> Expr) -> String -> Parse Expr
+letExprP' :: (List LDefinE -> Expr -> Expr) -> String -> Parse Expr
 letExprP' con letkw = pbind (keywordP letkw) (\_    ->
                   pbind (blockP        ) (\defs ->
                   pbind (keywordP "in" ) (\_    ->

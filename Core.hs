@@ -93,11 +93,12 @@ programToTerm blocks = go 0 blocks where
       { Recursive    defins -> let { n = length defins ; k' = plus k n} in
                                RecT n (map (worker k') defins) (go      k' rest)
       ; NonRecursive defin  -> LetT   (     worker k   defin ) (go (inc k) rest) }}
-  ; worker level0 defin = case defin of { Defin name term -> Named name (transformVars f level0 term) } where
-     { f _level var = case var of { IdxV i -> IdxV i 
-                                  ; LevV j -> LevV (plus level0 j) 
-                                  ; TopV k -> LevV k 
-                                  ; _      -> var }}}
+  ; worker level0 ldefin = case ldefin of { Located loc defin -> case defin of
+     { Defin name term -> Named name (transformVars f level0 term) }} 
+     where { f _level var = case var of { IdxV i -> IdxV i 
+                                        ; LevV j -> LevV (plus level0 j) 
+                                        ; TopV k -> LevV k 
+                                        ; _      -> var }}}
 
 -- | it's important to eliminate levels because they can point to top-level definitions...?
 -- TODO: to be really correct, we should recognize top-level definitions...
@@ -108,7 +109,7 @@ termToProgram term = go 0 term where
                            Cons (Recursive     (map (worker k') nts)) (go      k' body)
       ; LetT   nt  body -> Cons (NonRecursive  (     worker k   nt )) (go (inc k) body)
       ; MainT -> Nil }
-  ; worker level0 named = case named of { Named name term -> Defin name (transformVars f level0 term) } where
+  ; worker level0 named = case named of { Named name term -> fakeLocated (Defin name (transformVars f level0 term)) } where
       { f level var = case var of { IdxV i -> g level (minus level (inc i)) ; LevV j -> g level j ; _ -> var }
       ; g level jdx = ifte (lt jdx level0) (TopV jdx) (IdxV (minus level (inc jdx)))
       }}

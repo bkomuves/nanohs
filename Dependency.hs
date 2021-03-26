@@ -31,47 +31,69 @@ import Syntax
 -- * partition lets into recursive and non-recursive parts
 
 data Let
-  = Let1   DefinE
-  | LetRec (List DefinE)
+  = Let1   LDefinE
+  | LetRec (List LDefinE)
   deriving Show
 
 isRecursiveDefin :: DefinE -> Bool
 isRecursiveDefin def = case def of { Defin name rhs -> trieMember name (exprFreeVars rhs) }
 
-mkLet :: List DefinE -> Let
+mkLet :: List LDefinE -> Let
 mkLet list = case mbSingleton list of 
   { Nothing  -> LetRec list
-  ; Just def -> ifte (isRecursiveDefin def) (LetRec (singleton def)) (Let1 def) }
+  ; Just def -> ifte (isRecursiveDefin (located def)) (LetRec (singleton def)) (Let1 def) }
 
-checkForDuplicates :: List DefinE -> a -> a
-checkForDuplicates defins what = case trieFromListUnique duplicate (map definToPair defins) of 
+checkForDuplicates :: List LDefinE -> a -> a
+checkForDuplicates defins what = case trieFromListUnique duplicate (map (compose definToPair located) defins) of 
   { Node _ _ -> what } where { duplicate n  = concat [ "multiple declaration of " , quoteString n ] }
 
 -- debug "graph" (trieToList graph) (debug "SCC" sccs (
-partitionLets :: List DefinE -> List Let
-partitionLets defins = map (compose mkLet (map lkp)) sccs where
-  { names = map definedName defins
+partitionLets :: List LDefinE -> List Let
+partitionLets ldefins = map (compose mkLet (map lkp)) sccs where
+  { names = map (compose definedName located) ldefins
   ; isName n = stringElem n names
-  ; graph = trieFromList (for defins (\def -> case def of { Defin name rhs -> 
-      Pair name (filter isName (trieSetToList (exprFreeVars rhs))) } ))
-  ; sccs = depenencyAnalysis (checkForDuplicates defins graph)
-  ; defTrie = trieFromList (map definToPair defins)
-  ; lkp n = case trieLookup n defTrie of { Just y -> Defin n y ; Nothing -> error "partitionLets: shouldn't happen" }
-  }
+  ; graph = trieFromList (for ldefins (\ldef -> case ldef of { Located loc def -> case def of { Defin name rhs -> 
+      Pair name (filter isName (trieSetToList (exprFreeVars rhs))) }} ))
+  ; sccs = dependencyAnalysis (checkForDuplicates ldefins graph)
+  ; defTrie = trieFromList (map ldefinToPair ldefins)
+  ; lkp n = case trieLookup n defTrie of { Just locy -> case locy of { Located loc y -> Located loc (Defin n y) } 
+      ; Nothing -> error "partitionLets: shouldn't happen" } }
 
--- | Top-level everything is letrec, but we still do the reordering and check for "lambdas only" condition?
-reorderProgram :: List (Defin Expr) -> Program Expr
-reorderProgram list = worker (reorderLets (RecE list MainE)) where
+-- | Top-level everything is letrec, but we still do the reordering.
+reorderProgram :: List (LDefin Expr) -> Program Expr
+reorderProgram list = worker (checkRecursiveLets (reorderLets (RecE list MainE))) where
   { worker expr = case expr of
     { LetE defs body -> append (map NonRecursive defs) (worker body)
-    ; RecE defs body -> let { bad = filter (\def -> not (isLambdaExpr (definedWhat def))) defs } in case bad of
-                        { Nil -> Cons (Recursive defs) (worker body)
-                        ; _   -> let { names = map definedName bad ; text = intercalate ", " (map quoteString names) }
-                                 in  (error (append "recursive definitions must be lambdas: " text)) }
+    ; RecE defs body -> Cons          (Recursive defs) (worker body)
     ; MainE -> Nil }}
 
+-- | check for \"lambdas only\" condition in letrecs
+checkRecursiveLets :: Expr -> Expr
+checkRecursiveLets expr = go expr where
+  { go expr = case expr of
+      { VarE _         -> expr
+      ; AppE e1 e2     -> AppE (go e1) (go e2)
+      ; LamE v body    -> LamE v (go body)
+      ; LetE defs body -> LetE (map goDefin defs) (go body)
+      ; RecE defs body -> let { bad = filter (\ldef -> not (isLambdaExpr (definedWhat (located ldef)))) defs } 
+                          in  case bad of
+                                { Nil -> RecE (map goDefin defs) (go body)
+                                ; _   -> let { badwhat = map showNameAndLoc bad ; text = intercalate ", " badwhat }
+                                in  (error (append "recursive definitions must be lambdas: " text)) }                        
+      ; CaseE what brs -> CaseE what (map goBranch brs)
+      ; LitE  _        -> expr
+      ; ListE list     -> ListE   (map go list)
+      ; PrimE p list   -> PrimE p (map go list)
+      ; StrE  _        -> expr
+      ; MainE          -> expr }
+  ; goDefin  ldefin = case ldefin of { Located loc defin -> case defin of 
+      { Defin name rhs -> Located loc (Defin name (go rhs)) }}
+  ; goBranch branch = case branch of 
+      { DefaultE rhs         -> DefaultE (go rhs)
+      ; BranchE con args rhs -> BranchE con args (go rhs) } }
+
 reorderLets :: Expr -> Expr
-reorderLets = go where
+reorderLets expr = go expr where
   { go expr = case expr of
     { VarE  _       -> expr
     ; LitE  _       -> expr
@@ -84,7 +106,7 @@ reorderLets = go where
     ; ListE es      -> ListE (map go es)
     ; PrimE p es    -> PrimE p (map go es) 
     ; MainE         -> MainE }
-  ; goDefin def = case def of { Defin n rhs -> Defin n (go rhs) }
+  ; goDefin ldef = lfmap (\def -> case def of { Defin n rhs -> Defin n (go rhs) }) ldef
   ; goBranch branch = case branch of 
       { DefaultE rhs -> DefaultE (go rhs) 
       ; BranchE con args rhs -> BranchE con args (go rhs) }
@@ -114,8 +136,8 @@ flipGraph graph = insertKeys (graphFromList (map swap (graphToList graph))) wher
   ; insertKeys g = foldl (\old k -> trieAlter h k old) g keys
   ; h mb = case mb of { Nothing -> Just Nil ; Just _ -> mb } }
 
-depenencyAnalysis :: Graph -> List (List Vtx)
-depenencyAnalysis g = tarjanSCC (flipGraph g)
+dependencyAnalysis :: Graph -> List (List Vtx)
+dependencyAnalysis g = tarjanSCC (flipGraph g)
 
 --------------------------------------------------------------------------------
 -- * Tarjan's topologically sorted SCC algorithm

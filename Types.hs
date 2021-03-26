@@ -58,6 +58,9 @@ data Mode
   | Interpret
   deriving Show
 
+-- | Sometimes we need some fake argument for recursive definitions... (?!?)
+data Fake = Fake
+
 --------------------------------------------------------------------------------
 -- ** Named things
 
@@ -97,18 +100,37 @@ definToNamed def = case def of { Defin n rhs -> Named n rhs }
 namedToDefin :: Named a -> Defin a
 namedToDefin named = case named of { Named n x -> Defin n x }
 
+ldefinToPair :: LDefin a -> Pair Name (Located a)
+ldefinToPair ldef = case ldef of { Located loc def -> case def of { Defin n rhs -> Pair n (Located loc rhs) } }
+
+--------------------------------------------------------------------------------
+
+type LDefin a = Located (Defin a)
+
+fmapLDefin :: (a -> b) -> LDefin a -> LDefin b
+fmapLDefin f = lfmap (fmapDefin f)
+
+ldefinedName :: LDefin a -> Name
+ldefinedName = compose definedName located
+
+nameAndLoc :: LDefin a -> Pair Name Location
+nameAndLoc ldefin = case ldefin of { Located loc defin -> case defin of { Defin name _ -> Pair name loc }}
+
+showNameAndLoc :: LDefin a -> String
+showNameAndLoc ldefin = case nameAndLoc ldefin of { Pair name loc -> append3 (quoteString name) " at " (showLocation loc) }
+
 --------------------------------------------------------------------------------
 -- * Programs
 
 -- | We partition our programs into non-recursive definitions and mutually recursive blocks
 data Block a
-  = NonRecursive       (Defin a)
-  | Recursive    (List (Defin a))
+  = NonRecursive       (LDefin a)
+  | Recursive    (List (LDefin a))
   deriving Show
 
 type Program a = List (Block a)
 
-forgetBlockStructure :: Program a -> List (Defin a)
+forgetBlockStructure :: Program a -> List (LDefin a)
 forgetBlockStructure prg = go prg where
   { go blocks = case blocks of { Nil -> Nil ; Cons this rest -> case this of
     { NonRecursive defin  -> Cons defin    (go rest) 
@@ -201,6 +223,7 @@ showLocation :: Location -> String
 showLocation loc = case loc of { Loc fname pos1 pos2 -> concat
   [ "file " , doubleQuoteString fname , ", " , showSrcPos_ pos1 , "--" , showSrcPos_ pos2 ] }
 
+-- | Note: For stringy code-gen, we have to escape double quotes, because the became string literals
 escapedShowLocation :: Location -> String
 escapedShowLocation loc = case loc of { Loc fname pos1 pos2 -> concat
   [ "file " , escapedDoubleQuoteString fname , ", " , showSrcPos_ pos1 , "--" , showSrcPos_ pos2 ] }

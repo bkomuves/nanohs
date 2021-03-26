@@ -30,14 +30,15 @@ import PrimOps
 --------------------------------------------------------------------------------
 -- * Surface syntax
 
-type DefinE = Defin Expr
+type DefinE  = Defin  Expr
+type LDefinE = LDefin Expr
 
 -- | We \"parse\" (well, recognize) type declarations, data declarations,
 -- type synonyms and imports, but we ignore them; this is simply so that the
 -- this source code can be a valid Haskell program and self-hosting at the
 -- same time.
 data TopLevel
-  = TopDefin    DefinE
+  = TopDefin    LDefinE
   | TopTyDecl   Name (List Token)
   | TopDataDecl (List Token)
   | TopTyAlias  (List Token)
@@ -50,7 +51,7 @@ filterIncludes :: List TopLevel -> List FilePath
 filterIncludes = go where { go ls = case ls of { Nil -> Nil ; Cons this rest ->
   case this of { TopInclude fn -> Cons fn (go rest) ; _ -> go rest }}}
 
-mbDefin :: TopLevel -> Maybe DefinE
+mbDefin :: TopLevel -> Maybe LDefinE
 mbDefin toplev = case toplev of { TopDefin def -> Just def ; _ -> Nothing }
 
 --------------------------------------------------------------------------------
@@ -61,8 +62,8 @@ data Expr
   = VarE  LName
   | AppE  Expr Expr
   | LamE  Name Expr
-  | LetE  (List DefinE) Expr
-  | RecE  (List DefinE) Expr
+  | LetE  (List LDefinE) Expr
+  | RecE  (List LDefinE) Expr
   | CaseE LExpr (List BranchE)
   | LitE  Literal
   | ListE (List Expr)
@@ -128,8 +129,8 @@ exprFreeVars expr = go trieEmpty expr where
     { VarE lname     -> let { nam = located lname } in case trieMember nam bound of { False -> trieSetSingleton nam ; _ -> trieEmpty }
     ; AppE e1 e2     -> trieUnion (go bound e1) (go bound e2)
     ; LamE v body    -> go (trieSetInsert v bound) body
-    ; LetE defs body -> goLets   bound defs body
-    ; RecE defs body -> goLetRec bound defs body
+    ; LetE defs body -> goLets   bound (map located defs) body
+    ; RecE defs body -> goLetRec bound (map located defs) body
     ; CaseE what brs -> trieUnion (go bound (located what)) (trieUnions (map (goBranch bound) brs))
     ; LitE  _        -> trieEmpty
     ; ListE list     -> trieUnions (map (go bound) list)
@@ -194,8 +195,8 @@ recogPrimApps1 primops = go where
   ; goBranch branch = case branch of
       { BranchE con args rhs -> BranchE con args (go rhs)
       ; DefaultE         rhs -> DefaultE         (go rhs) }
-  ; goDefin defin = case defin of
-      { Defin name expr -> Defin name (go expr) } }
+  ; goDefin ldefin = case ldefin of { Located loc defin -> case defin of
+      { Defin name expr -> Located loc (Defin name (go expr)) } } }
 
 --------------------------------------------------------------------------------
 -- * extract string constants
@@ -207,10 +208,11 @@ addString :: String -> Stringy Int
 addString what = sbind sget (\pair -> case pair of { Pair n list -> 
                  sbind (sput (Pair (inc n) (Cons what list))) (\_ -> sreturn n) })
 
-extractStringConstants :: List DefinE -> Pair (List String) (List DefinE)
+extractStringConstants :: List LDefinE -> Pair (List String) (List LDefinE)
 extractStringConstants program = case runState (smapM worker program) (Pair 0 Nil) of
   { Pair fstate prg' -> Pair (reverse (snd fstate)) prg' } 
-  where { worker defin = case defin of { Defin name rhs -> sfmap (Defin name) (extractStringConstants1 rhs) } }
+  where { worker ldefin = case ldefin of { Located loc defin -> case defin of 
+    { Defin name rhs -> sfmap (\x -> Located loc (Defin name x)) (extractStringConstants1 rhs) }}}
 
 extractStringConstants1 :: Expr -> Stringy Expr 
 extractStringConstants1 expr = go expr where
@@ -224,7 +226,8 @@ extractStringConstants1 expr = go expr where
     ; CaseE what brs -> sliftA2 CaseE (lgo what) (smapM goBranch brs)
     ; ListE ls       -> sfmap   ListE (smapM go ls)
     ; PrimE pri args -> sfmap  (PrimE pri) (smapM go args) }
-  ; goDefin  defin  = case defin of { Defin name rhs -> sfmap (Defin name) (go rhs) }
+  ; goDefin  ldefin = case ldefin of { Located loc defin -> case defin of 
+      { Defin name rhs -> sfmap (\e -> Located loc (Defin name e)) (go rhs) }}
   ; goBranch branch = case branch of 
     { BranchE con args rhs -> sfmap (BranchE con args) (go rhs)
     ; DefaultE         rhs -> sfmap (DefaultE        ) (go rhs) } 

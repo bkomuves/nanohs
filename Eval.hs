@@ -57,6 +57,9 @@ runAction action = case action of { Action m -> m }
 showValue_ :: Value -> String
 showValue_ value = showValue Nil value
 
+showValue' :: StaticEnv -> Value -> String
+showValue' statenv val = case statenv of { StaticEnv dconNames _ _ -> showValue dconNames val }
+
 type DConNames = Map Int String
 
 showValue :: DConNames -> Value -> String
@@ -255,9 +258,9 @@ eval statEnv env term = case term of
      ; _    -> error "eval: unrecognized lazy primop" }}
   ; LetT nt1 t2   -> iobind (eval statEnv env (forgetName nt1)) (\x -> eval statEnv (pushEnv1 x env) t2)
   ; LamT body     -> ioreturn (mkLamV statEnv env (forgetName body)) 
-  ; CasT atom brs -> case evalAtom statEnv env (located atom) of
+  ; CasT latom brs -> let { scrutinee = evalAtom statEnv env (located latom) } in case scrutinee of
      { ConV con args -> matchCon statEnv env con args brs
-     ; _             -> error "eval: branching on a non-constructor" }
+     ; _             -> error (concat [ "eval: branching on a non-constructor at " , showLocation (location latom), "; scrutinee = " , showValue' statEnv scrutinee ]) }
   ; RecT n nts tm -> let { env' = pushEnvRec n (map forgetName nts) env } in eval statEnv env' tm
   ; MainT         -> case statEnv of { StaticEnv _ _ mainidx -> 
                        let { k = minus (lengthEnv env) (inc mainidx) }
