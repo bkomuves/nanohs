@@ -133,13 +133,13 @@ There are some minor tricks you should be aware if you try to read the code.
 
 The order of function arguments on the stack, the captured variables in closures 
 and also the order of constructor arguments on heap are all reversed compared to 
-the "logical" (source code) order. This makes the implementation of (over-)application
+the "logical" (source code) order. This makes the implementation of application
 much simpler.
 
-   [ Cons_tag    argN ... arg2 arg1 ]                   # data constructor heap object
-   [ Closure_tag envK ... env2 env1 ]                   # closure heap object 
-   [ ... | argN ... arg1 envK ... env1 | undefined ]    # stack when calling a static function
-         ^ BP                          ^ SP
+    [ Cons_tag    argN ... arg2 arg1 ]                   # data constructor heap object
+    [ Closure_tag envK ... env2 env1 ]                   # closure heap object 
+    [ ... | argN ... arg1 envK ... env1 | undefined ]    # stack when calling a static function
+          ^ BP                          ^ SP
 
 Note: our stack grows "upwards" (unlike the CPU stack which grows "downwards").
 
@@ -149,7 +149,7 @@ There is an IO monad, which in the GHC runtime and the interpreted runtime is
 the host's IO monad, while in the compiled code it is encoded with functions
 having side effects:
 
-   type IO a = ActionToken -> a
+    type IO a = ActionToken -> a
 
 You need to begin your `main` function with an explicit `runIO` call (this is
 useful while debugging, as main can be just a simple expression instead).
