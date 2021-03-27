@@ -19,10 +19,10 @@ Current status
 
 * it compiles via GHC, both with and without optimizations
 * it self-hosts, both with and without optimizations
-* it needs a large C stack (16-32 Mb) + GCC optims (because of the lack of tail call elimination)
-* source code: about 1900 "essential" lines + 520 lines of type annotations; C runtime: \~650 lines
+* it needs a large C stack (32+ Mb) + GCC optims (because of the lack of tail call elimination)
+* source code: about 2000 "essential" lines + 560 lines of type annotations; the C runtime is \~650 lines
   (including some debugging features)
-* the interpreter does not work at the moment
+* the interpreter is not working 100% correctly at the moment
 
 
 Usage
@@ -30,7 +30,7 @@ Usage
 
     $ nanohs -c input.hs output.c            # compile with optimizations disabled
     $ nanhos -o input.hs output.c            # compile with optimizations enabled
-    $ nanhos -i input.hs [arg1 [arg2 ...]]   # interpret (does not work at the moment)
+    $ nanhos -i input.hs [arg1 [arg2 ...]]   # interpret
 
 Or you can just use `runghc`:
 
@@ -113,7 +113,7 @@ On the heap there are only two kind of objects, closures and data constructors:
 
 Heap pointers are also tagged:
 
-* normal heap pointer
+* normal heap pointer (closure or data constructor)
 * 61 bit literals (int / char)
 * nullary constructors
 * static function pointers
@@ -122,6 +122,37 @@ Heap pointers are also tagged:
 There are no thunks on the heap because we are strict.
 
 The garbage collector is a very simple copying (compacting) GC.
+
+
+Implementation details
+----------------------
+
+There are some minor tricks you should be aware if you try to read the code.
+
+### Argument order
+
+The order of function arguments on the stack, the captured variables in closures 
+and also the order of constructor arguments on heap are all reversed compared to 
+the "logical" (source code) order. This makes the implementation of (over-)application
+much simpler.
+
+   [ Cons_tag    argN ... arg2 arg1 ]                   # data constructor heap object
+   [ Closure_tag envK ... env2 env1 ]                   # closure heap object 
+   [ ... | argN ... arg1 envK ... env1 | undefined ]    # stack when calling a static function
+         ^ BP                          ^ SP
+
+Note: our stack grows "upwards" (unlike the CPU stack which grows "downwards").
+
+### IO monad
+
+There is an IO monad, which in the GHC runtime and the interpreted runtime is
+the host's IO monad, while in the compiled code it is encoded with functions
+having side effects:
+
+   type IO a = ActionToken -> a
+
+You need to begin your `main` function with an explicit `runIO` call (this is
+useful while debugging, as main can be just a simple expression instead).
 
 
 Organization of source code
