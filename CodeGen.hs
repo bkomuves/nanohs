@@ -390,7 +390,7 @@ caseOfToCode nfo latom branches = case latom of { Located srcloc atom ->
               , addWords [ "stack_ptr " , base , " = SP;" ]
               , swhen (gt arity 0) (ssequence_
                   [ addWords [ "stack_ptr " , args , " = rts_stack_allocate(" , showInt arity , ");" ]
-                  , sforM_ (range arity) (\j -> addWords [ args , "[" , showInt (minus arity (inc j)) , "] = " , scrutinee , "[" , showInt (inc j) , "];" ])
+                  , sforM_ (range arity) (\j -> addWords [ args , "[" , showInt j , "] = " , scrutinee , "[" , showInt (inc j) , "];" ])
                   ])
               , case cbody of
                   { InlineBody _ -> sreturn Unit
@@ -490,7 +490,7 @@ applicationToCode nfo fun args = case args of { Nil -> liftedToCode nfo fun ; _ 
   ; AtmF atom    -> case atom of
     { ConA named   -> let { nargs = length args} in case named of { Named dcon_name con -> withFreshVar "obj" (\obj -> sseq (ssequence_
         [ addWords [ "heap_ptr ", obj , " = rts_allocate_datacon(" , showInt con , "," , showInt nargs , ");   // " , dcon_name , "/" , showInt nargs]
-        , copyEnvironmentTo' nfo obj 1 (reverse args)
+        , copyEnvironmentTo' nfo obj 1 args
         ]) (sreturn obj)) }
     -- TODO: optimize top-level calls
     -- ; VarA named -> case named of { Named name var -> case var of

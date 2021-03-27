@@ -295,9 +295,9 @@ int rts_marshal_to_cstring(int nmax, char *target, heap_ptr source) {
   heap_ptr ptr = source;
   int i = 0;
   while( (i < nmax-1) && (IS_HEAP_PTR(ptr)) && (ptr[0] == TAGWORD_DATACON(CON_Cons,2)) ) {
-    int c = TO_INT(ptr[1]);
+    int c = TO_INT(ptr[2]);
     target[i++] = c;
-    ptr = (heap_ptr)(ptr[2]);
+    ptr = (heap_ptr)(ptr[1]);
   }  
   target[i] = 0;
   return i;
@@ -311,8 +311,8 @@ heap_ptr rts_marshal_from_cstring(const char *str) {
     heap_ptr rest = rts_marshal_from_cstring(str+1);   // allocate the remaining part
     *(SP++) = (uint64_t) rest;                         // push it on the stack so the GC sees it
     heap_ptr obj  = rts_allocate_datacon(CON_Cons,2);  // allocate a the final Cons
-    obj[1] = (uint64_t) CHR_LITERAL(c);
-    obj[2] = (uint64_t) SP[-1];                        // note that `rest` could have been moved!!
+    obj[2] = (uint64_t) CHR_LITERAL(c);
+    obj[1] = (uint64_t) SP[-1];                        // note that `rest` could have been moved!!
     SP--;                                              // pop the stack
     return obj;
   }
@@ -343,12 +343,11 @@ void rts_generic_print_limited(heap_ptr obj, int budget) {
         case HTAG_DCON: {
           int con_idx   = (tagword & 0xffff) >> 3;
           int con_arity = (tagword >> 16) & 0xffff;
-          // printf("(%s:%d/%d",ConstructorNames[con_idx],con_idx,con_arity);
           printf("(%s/%d",ConstructorNames[con_idx],con_arity);
           if (budget > 0) {
             for(int i=0;i<con_arity;i++) {
               printf(" ");
-              rts_generic_print_limited( (heap_ptr) obj[i+1] , budget-1);
+              rts_generic_print_limited( (heap_ptr) obj[con_arity-i] , budget-1);
             }
             printf(")");
           }
@@ -552,8 +551,8 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
           *(SP++) = (uint64_t)funobj;   // NB: the GC can move funobj!!!
           heap_ptr obj = rts_allocate_datacon(con, old_arity+nargs);
           heap_ptr funnew = (heap_ptr) *(--SP);
-          for(int i=0;i<old_arity;i++) { obj[i+1]           = funnew[i+1];        }
-          for(int j=0;j<nargs    ;j++) { obj[old_arity+1+j] = args  [nargs-j-1];  }  // arguments are opposite order, but constructors fields are not?
+          for(int j=0;j<nargs    ;j++) { obj[      j+1] = args  [j];     }
+          for(int i=0;i<old_arity;i++) { obj[nargs+i+1] = funnew[i+1];   }
           SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
           return obj;
         }
@@ -569,7 +568,7 @@ heap_ptr rts_apply(heap_ptr funobj, int nargs) {
     case PTAG_CON: {
       int con = ((int64_t)funobj) >> 3;
       heap_ptr obj = rts_allocate_datacon(con,nargs);
-      for(int i=0;i<nargs;i++) { obj[i+1] = args[nargs-i-1]; }
+      for(int i=0;i<nargs;i++) { obj[i+1] = args[i]; }
       SP -= nargs;  // there is no callee to free the arguments, so we have to do it!
       return obj;
     }
@@ -815,9 +814,9 @@ heap_ptr prim_Error(heap_ptr arg1) {
   fputc('*',stderr);
   fputc(' ',stderr);
   while( IS_HEAP_PTR(ptr) && (ptr[0] == TAGWORD_DATACON(CON_Cons,2)) ) {
-    int c = TO_INT(ptr[1]);
+    int c = TO_INT(ptr[2]);
     fputc(c,stderr);
-    ptr = (heap_ptr)(ptr[2]);
+    ptr = (heap_ptr)(ptr[1]);
   }  
   fputc('\n',stderr);
   exit(666);
