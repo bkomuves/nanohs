@@ -10,7 +10,7 @@ action_debug = iosequence_
   , print (SomeConstructor "hello" 666)
   ]
 
-big_action = putStrLn (showInt (length (big2 10 10 100)))
+-- big_action = putStrLn (showInt (length (big2 10 10 100)))
 
 big0     n = concat (replicate n "0123456789" )
 big1 m   n = concat (replicate m (big0 n)  )
