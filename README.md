@@ -47,11 +47,11 @@ Haskell imports are ignored, but you can use C-style includes with the pragma:
 The surface language
 --------------------
 
-The idea is to use a subset of Haskell syntax, so that the same program same
-program can be also compiled / interpreted by GHC. 
+The idea is to use a subset of Haskell syntax, so that the same
+program can also be compiled / interpreted by GHC.
 
 * no static type system (untyped lambda calculus) - but maybe there should be a type checker after all?
-* na data type declarations (constructors are arbitrary capitalized names)
+* no data type declarations (constructors are arbitrary capitalized names)
 * no module system - instead, C-style includes
 * strict language (if-then-else must be lazy though; `and` / `or` shortcuts too)
 * ML-style side effects (but only used for IO, which is then wrapped into a monad)
@@ -127,7 +127,7 @@ The garbage collector is a very simple copying (compacting) GC.
 Implementation details
 ----------------------
 
-There are some minor tricks you should be aware if you try to read the code.
+There are some minor tricks you should be aware of if you try to read the code.
 
 ### Argument order
 
